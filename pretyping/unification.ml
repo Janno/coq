@@ -695,14 +695,22 @@ let eta_constructor_app env sigma f l1 term =
   | _ -> assert false
 
 let rec unify_0_with_initial_metas (sigma,ms,es as subst : subst0) conv_at_top env cv_pb flags m n =
+
+  let print_time = ref 0.0 in
+
   let rec unirec_rec (curenv,nb as curenvnb) pb opt ((sigma,metasubst,evarsubst) as substn : subst0) curm curn =
     let cM = Evarutil.whd_head_evar sigma curm
     and cN = Evarutil.whd_head_evar sigma curn in
     let () =
       if !debug_unification then
+        (
+          let before = System.get_time() in
         Feedback.msg_debug (
           Termops.Internal.print_constr_env curenv sigma cM ++ str" ~= " ++
-          Termops.Internal.print_constr_env curenv sigma cN)
+          Termops.Internal.print_constr_env curenv sigma cN);
+    let after = System.get_time () in
+  print_time := !print_time +. (System.time_difference before after)
+      )
     in
       match (EConstr.kind sigma cM, EConstr.kind sigma cN) with
         | Meta k1, Meta k2 ->
@@ -1123,8 +1131,10 @@ let rec unify_0_with_initial_metas (sigma,ms,es as subst : subst0) conv_at_top e
         error_cannot_unify (fst curenvnb) sigma (cM,cN)
     else error_cannot_unify (fst curenvnb) sigma (cM,cN)
   in
-
   if !debug_unification then Feedback.msg_debug (str "Starting unification");
+
+  let start_time = System.get_time () in
+
   let opt = { at_top = conv_at_top; with_types = false; with_cs = true } in
   try
   let res =
@@ -1149,11 +1159,21 @@ let rec unify_0_with_initial_metas (sigma,ms,es as subst : subst0) conv_at_top e
     let a = match res with
     | Some sigma -> sigma, ms, es
     | None -> unirec_rec (env,0) cv_pb opt subst m n in
-    if !debug_unification then Feedback.msg_debug (str "Leaving unification with success");
+  if !debug_unification then
+    (
+     let end_time = System.get_time () in
+     let total_time = System.time_difference start_time end_time -. !print_time in
+     Feedback.msg_debug (str "Leaving unification with success (" ++ real total_time ++ str ")")
+    );
     a
   with e ->
     let e = CErrors.push e in
-    if !debug_unification then Feedback.msg_debug (str "Leaving unification with failure");
+    if !debug_unification then
+      (
+        let end_time = System.get_time () in
+        let total_time = System.time_difference start_time end_time -. !print_time in
+        Feedback.msg_debug (str "Leaving unification with failure (" ++ real total_time ++ str ")")
+      );
     iraise e
 
 
