@@ -70,3 +70,17 @@ Section W.
   Check (refl_equal _ : l _ = x2).
 End W.
 Fail Check (refl_equal _ : l _ = x2).
+
+
+
+(* Dependent function fields *)
+(* First, a sanity check with non-dependent functions *)
+Structure bla0 := { bla0_key : Type }.
+Canonical Structure bla0_func := {| bla0_key := nat -> nat |}.
+Check fun f : bla0_key _ => (f : _ -> _) 1.
+
+(* Now with dependent functions. *)
+Structure hello := { hello_key : Type }.
+Canonical Structure hello_dep := {| hello_key := forall x : nat, x = x |}.
+
+Check fun f : hello_key _ => (f : forall x : nat, x = x) 1.
