@@ -149,14 +149,12 @@ type obj_typ = {
 
 type cs_pattern =
     Const_cs of GlobRef.t
-  | Impl_cs
   | Prod_cs
   | Sort_cs of Sorts.family
   | Default_cs
 
 let eq_cs_pattern p1 p2 = match p1, p2 with
 | Const_cs gr1, Const_cs gr2 -> GlobRef.equal gr1 gr2
-| Impl_cs, Impl_cs -> true
 | Prod_cs, Prod_cs -> true
 | Sort_cs s1, Sort_cs s2 -> Sorts.family_equal s1 s2
 | Default_cs, Default_cs -> true
@@ -185,7 +183,6 @@ let rec cs_pattern_of_constr env t =
     let patt, n, args = cs_pattern_of_constr env f in
     patt, n, args @ Array.to_list vargs
   | Rel n -> Default_cs, Some n, []
-  | Prod (_,a,b) when Vars.noccurn 1 b -> Impl_cs, None, [a; Vars.lift (-1) b]
   | Prod (x,a,b) -> Prod_cs, None, [a; (mkLambda (x,a,b))]
   | Proj (p, c) ->
     let { Environ.uj_type = ty } = Typeops.infer env c in
@@ -246,7 +243,6 @@ let compute_canonical_projections env ~warn (gref,ind) =
 
 let pr_cs_pattern = function
     Const_cs c -> Nametab.pr_global_env Id.Set.empty c
-  | Impl_cs -> str "_ -> _"
   | Prod_cs -> str "forall _, _"
   | Default_cs -> str "_"
   | Sort_cs s -> Sorts.pr_sort_family s

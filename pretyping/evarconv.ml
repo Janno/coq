@@ -244,12 +244,8 @@ let check_conv_record env sigma (t1,sk1) (t2,sk2) =
   let canon_s,sk2_effective =
     try
       match EConstr.kind sigma t2 with
-        Prod (x,a,b) -> (* assert (l2=[]); *)
-          let _, a, b = destProd sigma t2 in
-          if noccurn sigma 1 b then
-            lookup_canonical_conversion (proji, Impl_cs),
-            (Stack.append_app [|a;pop b|] Stack.empty)
-          else
+        Prod (_,a,b) -> (* assert (l2=[]); *)
+          let x, a, b = destProd sigma t2 in
             lookup_canonical_conversion (proji, Prod_cs),
             (Stack.append_app [|a; mkLambda (x,a,b)|] Stack.empty)
       | Sort s ->
