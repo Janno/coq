@@ -157,6 +157,7 @@ type cs_pattern =
 let eq_cs_pattern p1 p2 = match p1, p2 with
 | Const_cs gr1, Const_cs gr2 -> GlobRef.equal gr1 gr2
 | Impl_cs, Impl_cs -> true
+| Prod_cs, Prod_cs -> true
 | Sort_cs s1, Sort_cs s2 -> Sorts.family_equal s1 s2
 | Default_cs, Default_cs -> true
 | _ -> false
@@ -185,7 +186,7 @@ let rec cs_pattern_of_constr env t =
     patt, n, args @ Array.to_list vargs
   | Rel n -> Default_cs, Some n, []
   | Prod (_,a,b) when Vars.noccurn 1 b -> Impl_cs, None, [a; Vars.lift (-1) b]
-  | Prod (_,a,b) -> Prod_cs, None, [a]
+  | Prod (_,a,b) -> Prod_cs, None, [a; b]
   | Proj (p, c) ->
     let { Environ.uj_type = ty } = Typeops.infer env c in
     let _, params = Inductive.find_rectype env ty in
