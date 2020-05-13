@@ -245,9 +245,8 @@ let check_conv_record env sigma (t1,sk1) (t2,sk2) =
     try
       match EConstr.kind sigma t2 with
         Prod (_,a,b) -> (* assert (l2=[]); *)
-          let x, a, b = destProd sigma t2 in
             lookup_canonical_conversion (proji, Prod_cs),
-            (Stack.append_app [|a; mkLambda (x,a,b)|] Stack.empty)
+            (Stack.append_app [|t2|] Stack.empty)
       | Sort s ->
         let s = ESorts.kind sigma s in
         lookup_canonical_conversion
