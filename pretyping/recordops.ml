@@ -183,7 +183,7 @@ let rec cs_pattern_of_constr env t =
     let patt, n, args = cs_pattern_of_constr env f in
     patt, n, args @ Array.to_list vargs
   | Rel n -> Default_cs, Some n, []
-  | Prod (x,a,b) -> Prod_cs, None, [t]
+  | Prod (_,_,_) -> Prod_cs, None, [t]
   | Proj (p, c) ->
     let { Environ.uj_type = ty } = Typeops.infer env c in
     let _, params = Inductive.find_rectype env ty in
