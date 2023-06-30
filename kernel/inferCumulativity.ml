@@ -248,6 +248,8 @@ let rec infer_fterm cv_pb infos variances hd stk =
     let variances = infer p variances in
     Array.fold_right infer br variances
 
+  | FPrimitive _ -> assert false (* TODO *)
+
   (* Removed by whnf *)
   | FLOCKED | FCaseT _ | FLetIn _ | FApp _ | FLIFT _ | FCLOS _ -> assert false
   | FIrrelevant -> assert false (* TODO: use create_conv_infos below and use it? *)
@@ -271,7 +273,7 @@ and infer_stack infos variances (stk:CClosure.stack) =
         infer_vect infos variances (Array.map (mk_clos e) br)
       | Zshift _ -> variances
       | Zupdate _ -> variances
-      | Zprimitive (_,_,rargs,kargs) ->
+      | Zprimitive (_,_,_,rargs,kargs) ->
         let variances = List.fold_left (fun variances c -> infer_fterm CONV infos variances c []) variances rargs in
         let variances = List.fold_left (fun variances (_,c) -> infer_fterm CONV infos variances c []) variances kargs in
         variances

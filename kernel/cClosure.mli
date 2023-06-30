@@ -118,6 +118,8 @@ type fterm =
   | FCLOS of constr * fconstr usubs
   | FIrrelevant
   | FLOCKED
+  | FPrimitive of CPrimitives.t * pconstant * fconstr * fconstr array
+    (* operator, constr def, primitive as an fconstr, full array of suitably evaluated arguments *)
 
 (***********************************************************************
   s A [stack] is a context of arguments, arguments are pushed by
@@ -129,8 +131,8 @@ type stack_member =
   | ZcaseT of case_info * Univ.Instance.t * constr array * case_return * case_branch array * fconstr usubs
   | Zproj of Projection.Repr.t
   | Zfix of fconstr * stack
-  | Zprimitive of CPrimitives.t * pconstant * fconstr list * fconstr next_native_args
-       (* operator, constr def, arguments already seen (in rev order), next arguments *)
+  | Zprimitive of CPrimitives.t * pconstant * fconstr * fconstr list * fconstr next_native_args
+       (* operator, constr def, primitive as an fconstr, arguments already seen (in rev order), next arguments *)
   | Zshift of int
   | Zupdate of fconstr
 
@@ -140,8 +142,6 @@ val empty_stack : stack
 val append_stack : fconstr array -> stack -> stack
 
 val check_native_args : CPrimitives.t -> stack -> bool
-val get_native_args1 : CPrimitives.t -> pconstant -> stack ->
-  fconstr list * fconstr * fconstr next_native_args * stack
 
 val stack_args_size : stack -> int
 

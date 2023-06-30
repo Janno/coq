@@ -58,7 +58,7 @@ let compare_stack_shape stk1 stk2 =
         Int.equal bal 0 (* && c1.ci_ind  = c2.ci_ind *) && compare_rec 0 s1 s2
     | (Zfix(_,a1)::s1, Zfix(_,a2)::s2) ->
         Int.equal bal 0 && compare_rec 0 a1 a2 && compare_rec 0 s1 s2
-    | Zprimitive(op1,_,rargs1, _kargs1)::s1, Zprimitive(op2,_,rargs2, _kargs2)::s2 ->
+    | Zprimitive(op1,_,_,rargs1, _kargs1)::s1, Zprimitive(op2,_,_,rargs2, _kargs2)::s2 ->
         bal=0 && op1=op2 && List.length rargs1=List.length rargs2 &&
         compare_rec 0 s1 s2
     | [], _ :: _
@@ -109,7 +109,7 @@ let pure_stack lfts stk =
                 (l, Zlfix((lfx,fx),pa)::pstk)
             | (ZcaseT(ci,u,pms,p,br,e),(l,pstk)) ->
                 (l,Zlcase(ci,l,u,pms,p,br,e)::pstk)
-            | (Zprimitive(op,c,rargs,kargs),(l,pstk)) ->
+            | (Zprimitive(op,c,_,rargs,kargs),(l,pstk)) ->
                 (l,Zlprimitive(op,c,List.map (fun t -> (l,t)) rargs,
                             List.map (fun (k,t) -> (k,(l,t))) kargs)::pstk))
   in
@@ -716,6 +716,11 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
       let cuniv = Parray.fold_left2 (fun u v1 v2 -> ccnv CONV l2r infos el1 el2 v1 v2 u) cuniv t1 t2 in
       convert_stacks l2r infos lft1 lft2 v1 v2 cuniv
 
+    | FPrimitive (op1, (_, u1), _, args1), FPrimitive (op2, (_, u2), _, args2) ->
+      if op1 <> op2 then raise NotConvertible;
+      let cuniv = convert_instances ~flex:false u1 u2 cuniv in
+      convert_stacks l2r infos lft1 lft2 (Zapp args1 :: v1) (Zapp args2 :: v2) cuniv
+
     | (FRel n1, FIrrelevant) ->
       let n1 = reloc_rel n1 (el_stack lft1 v1) in
       let r1 = Range.get (info_relevances infos.cnv_inf) (n1 - 1) in
@@ -738,10 +743,11 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
      (* Should not happen because both (hd1,v1) and (hd2,v2) are in whnf *)
      | ( (FLetIn _, _) | (FCaseT _,_) | (FApp _,_) | (FCLOS _,_) | (FLIFT _,_)
        | (_, FLetIn _) | (_,FCaseT _) | (_,FApp _) | (_,FCLOS _) | (_,FLIFT _)
-       | (FLOCKED,_) | (_,FLOCKED) ) -> assert false
+       | (FLOCKED,_) | (_,FLOCKED)) -> assert false
 
      | (FRel _ | FAtom _ | FInd _ | FFix _ | FCoFix _ | FCaseInvert _
-       | FProd _ | FEvar _ | FInt _ | FFloat _ | FArray _ | FIrrelevant), _ -> raise NotConvertible
+       | FProd _ | FEvar _ | FInt _ | FFloat _ | FArray _ | FIrrelevant
+       | FPrimitive _), _ -> raise NotConvertible
 
 and convert_stacks l2r infos lft1 lft2 stk1 stk2 cuniv =
   let f (l1, t1) (l2, t2) cuniv = ccnv CONV l2r infos l1 l2 t1 t2 cuniv in

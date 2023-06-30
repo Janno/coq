@@ -37,6 +37,11 @@ let add_retroknowledge retro action =
         (match retro.retro_array with
          | None -> { retro with retro_array = Some c }
          | Some c' -> check_same_types typ c c'; retro)
+
+      | PT_blocked ->
+        (match retro.retro_blocked with
+         | None -> { retro with retro_blocked = Some c }
+         | Some c' -> check_same_types typ c c'; retro)
     end
 
   | Register_ind(pit,ind) ->
@@ -138,12 +143,14 @@ module type RedNativeEntries =
     type elem
     type args
     type evd (* will be unit in kernel, evar_map outside *)
+    type lazy_info
     type uinstance
 
     val get : args -> int -> elem
     val get_int : evd -> elem -> Uint63.t
     val get_float : evd -> elem -> Float64.t
     val get_parray : evd -> elem -> elem Parray.t
+    val get_blocked : Environ.env -> evd -> elem -> elem
     val mkInt : env -> Uint63.t -> elem
     val mkFloat : env -> Float64.t -> elem
     val mkBool : env -> bool -> elem
@@ -167,6 +174,9 @@ module type RedNativeEntries =
     val mkNInf : env -> elem
     val mkNaN : env -> elem
     val mkArray : env -> uinstance -> elem Parray.t -> elem -> elem
+
+    val eval_lazy : lazy_info -> elem -> elem
+    val mkApp : elem -> elem array -> elem
   end
 
 module type RedNative =
@@ -174,19 +184,22 @@ module type RedNative =
    type elem
    type args
    type evd
+   type lazy_info
    type uinstance
-   val red_prim : env -> evd -> CPrimitives.t -> uinstance -> args -> elem option
+   val red_prim : env -> evd -> lazy_info -> CPrimitives.t -> uinstance -> args -> elem option
  end
 
 module RedNative (E:RedNativeEntries) :
   RedNative with type elem = E.elem
   with type args = E.args
   with type evd = E.evd
+  with type lazy_info = E.lazy_info
   with type uinstance = E.uinstance =
 struct
   type elem = E.elem
   type args = E.args
   type evd = E.evd
+  type lazy_info = E.lazy_info
   type uinstance = E.uinstance
 
   let get_int evd args i = E.get_int evd (E.get args i)
@@ -206,7 +219,9 @@ struct
 
   let get_parray evd args i = E.get_parray evd (E.get args i)
 
-  let red_prim_aux env evd op u args =
+  exception Blocked
+
+  let red_prim_aux env evd lazy_info op u args =
     let open CPrimitives in
     match op with
     | Int63head0 ->
@@ -390,12 +405,21 @@ struct
     | Arraylength ->
       let t = get_parray evd args 1 in
       E.mkInt env (Parray.length t)
+    | Run ->
+      let t = E.get args 2 in
+      let f = E.get args 3 in
+      E.mkApp f [|E.eval_lazy lazy_info t|]
+    | Block ->
+      raise Blocked
+    | Unblock ->
+      let t = E.get args 1 in
+      E.get_blocked env evd t
 
-  let red_prim env evd p u args =
+  let red_prim env evd lazy_info p u args =
     try
       let r =
-        red_prim_aux env evd p u args
+        red_prim_aux env evd lazy_info p u args
       in Some r
-    with NativeDestKO -> None
+    with NativeDestKO | Blocked -> None
 
 end

@@ -254,6 +254,8 @@ and fterm =
   | FCLOS of constr * fconstr usubs
   | FIrrelevant
   | FLOCKED
+  | FPrimitive of CPrimitives.t * pconstant * fconstr * fconstr array
+    (* operator, constr def, primitive as an fconstr, full array of suitably evaluated arguments *)
 
 and finvert = fconstr array
 
@@ -308,8 +310,8 @@ type stack_member =
   | ZcaseT of case_info * Univ.Instance.t * constr array * case_return * case_branch array * fconstr usubs
   | Zproj of Projection.Repr.t
   | Zfix of fconstr * stack
-  | Zprimitive of CPrimitives.t * pconstant * fconstr list * fconstr next_native_args
-       (* operator, constr def, arguments already seen (in rev order), next arguments *)
+  | Zprimitive of CPrimitives.t * pconstant * fconstr * fconstr list * fconstr next_native_args
+       (* operator, constr def, primitive as an fconstr, arguments already seen (in rev order), next arguments *)
   | Zshift of int
   | Zupdate of fconstr
 
@@ -353,7 +355,7 @@ let rec lft_fconstr n ft =
     | FLIFT(k,m) -> lft_fconstr (n+k) m
     | FLOCKED -> assert false
     | FFlex (RelKey _) | FAtom _ | FApp _ | FProj _ | FCaseT _ | FCaseInvert _ | FProd _
-      | FLetIn _ | FEvar _ | FCLOS _ | FArray _ -> {mark=ft.mark; term=FLIFT(n,ft)}
+      | FLetIn _ | FEvar _ | FCLOS _ | FArray _ | FPrimitive _ -> {mark=ft.mark; term=FLIFT(n,ft)}
 let lift_fconstr k f =
   if Int.equal k 0 then f else lft_fconstr k f
 let lift_fconstr_vect k v =
@@ -631,6 +633,9 @@ let rec to_constr (lfts, usubst as ulfts) v =
         let subs = comp_subs ulfts env in
         subst_constr subs t
 
+    | FPrimitive (_, _, h, args) ->
+        mkApp (to_constr ulfts h, Array.map (to_constr ulfts) args)
+
     | FIrrelevant -> assert (!Flags.in_debugger); mkVar(Id.of_string"_IRRELEVANT_")
     | FLOCKED -> assert (!Flags.in_debugger); mkVar(Id.of_string"_LOCKED_")
 
@@ -684,7 +689,7 @@ let rec zip m stk =
       (** The stack contains [Zupdate] marks only if in sharing mode *)
         let () = update rf m.mark m.term in
         zip rf s
-    | Zprimitive(_op,c,rargs,kargs)::s ->
+    | Zprimitive(_op,c,_,rargs,kargs)::s ->
       let args = List.rev_append rargs (m::List.map snd kargs) in
       let f = {mark = Red; term = FFlex (ConstKey c)} in
       zip {mark=(neutr m.mark); term = FApp (f, Array.of_list args)} s
@@ -821,13 +826,6 @@ let get_native_args op c stk =
       strip_rec rnargs m depth  kargs s
     | (Zprimitive _ | ZcaseT _ | Zproj _ | Zfix _) :: _ | [] -> assert false
   in strip_rec [] {mark = Red; term = FFlex(ConstKey c)} 0 kargs stk
-
-let get_native_args1 op c stk =
-  match get_native_args op c stk with
-  | ((rargs, (kd,a):: nargs), stk) ->
-      assert (kd = CPrimitives.Kwhnf);
-      (rargs, a, nargs, stk)
-  | _ -> assert false
 
 let check_native_args op stk =
   let nargs = CPrimitives.arity op in
@@ -1006,11 +1004,15 @@ let unfold_projection info p =
 
 open Primred
 
+(* The evaluation function is not yet available. *)
+let eval_lazy_ref = ref (fun _ _ -> assert false)
+
 module FNativeEntries =
   struct
     type elem = fconstr
     type args = fconstr array
     type evd = unit
+    type lazy_info = clos_infos * (fconstr, Util.Empty.t) Declarations.constant_def KeyTable.t
     type uinstance = Univ.Instance.t
 
     let mk_construct c =
@@ -1032,6 +1034,11 @@ module FNativeEntries =
     let get_parray () e =
       match [@ocaml.warning "-4"] e.term with
       | FArray (_u,t,_ty) -> t
+      | _ -> assert false
+
+    let get_blocked _ () e =
+      match [@ocaml.warning "-4"] e.term with
+      | FPrimitive (CPrimitives.Block, _, _, [|_; t|]) -> t
       | _ -> assert false
 
     let dummy = {mark = Ntrl; term = FRel 0}
@@ -1301,6 +1308,12 @@ module FNativeEntries =
       check_array env;
       { mark = Cstr; term = FArray (u,t,ty)}
 
+    let eval_lazy lazy_info t =
+      !eval_lazy_ref lazy_info t
+
+    let mkApp t args =
+      { mark = Red; term = FApp(t, args) }
+
   end
 
 module FredNative = RedNative(FNativeEntries)
@@ -1361,7 +1374,8 @@ let rec knh info m stk =
 
 (* cases where knh stops *)
     | (FFlex _|FLetIn _|FConstruct _|FEvar _|FCaseInvert _|FIrrelevant|
-       FCoFix _|FLambda _|FRel _|FAtom _|FInd _|FProd _|FInt _|FFloat _|FArray _) ->
+       FCoFix _|FLambda _|FRel _|FAtom _|FInd _|FProd _|FInt _|FFloat _|
+       FArray _|FPrimitive _) ->
         (m, stk)
 
 (* The same for pure terms *)
@@ -1431,8 +1445,14 @@ let rec knr info tab m stk =
         | Primitive op ->
           if check_native_args op stk then
             let c = match fl with ConstKey c -> c | RelKey _ | VarKey _ -> assert false in
-            let rargs, a, nargs, stk = get_native_args1 op c stk in
-            kni info tab a (Zprimitive(op,c,rargs,nargs)::stk)
+            (* In our case, none of the instruciton arguments need evaluating!!! *)
+            match get_native_args op c stk with
+            | ((rargs, (kd,a) :: nargs), stk) ->
+              assert (kd = CPrimitives.Kwhnf);
+              kni info tab a (Zprimitive(op,c,m,rargs,nargs)::stk)
+            | ((rargs, []), stk) ->
+              let args = Array.of_list (List.rev rargs) in
+              knr info tab (mk_red (FPrimitive(op,c,m,args))) stk
           else
             (* Similarly to fix, partially applied primitives are not Ntrl! *)
             (m, stk)
@@ -1473,21 +1493,22 @@ let rec knr info tab m stk =
     else (m, stk)
   | FLetIn (_,v,_,bd,e) when red_set info.i_flags fZETA ->
       knit info tab (on_fst (subs_cons v) e) bd stk
-  | FInt _ | FFloat _ | FArray _ ->
+  | FPrimitive (op, (_,u), _, args) when m.mark <> Cstr ->
+    (match FredNative.red_prim (info_env info) () (info, tab) op u args with
+     | Some m -> kni info tab m stk
+     | None -> m.mark <- Cstr; knr info tab m stk)
+  | FInt _ | FFloat _ | FArray _ | FPrimitive _ ->
     (match [@ocaml.warning "-4"] strip_update_shift_app m stk with
-     | (_, _, Zprimitive(op,(_,u as c),rargs,nargs)::s) ->
+     | (_, _, Zprimitive(op,c,opm,rargs,nargs)::s) ->
        let (rargs, nargs) = skip_native_args (m::rargs) nargs in
        begin match nargs with
          | [] ->
            let args = Array.of_list (List.rev rargs) in
-           begin match FredNative.red_prim (info_env info) () op u args with
-            | Some m -> kni info tab m s
-            | None -> assert false
-           end
+           knr info tab (mk_red (FPrimitive(op,c,opm,args))) s
          | (kd,a)::nargs ->
            assert (kd = CPrimitives.Kwhnf);
-           kni info tab a (Zprimitive(op,c,rargs,nargs)::s)
-             end
+           kni info tab a (Zprimitive(op,c,opm,rargs,nargs)::s)
+       end
      | (_, _, s) -> (m, s))
   | FCaseInvert (ci, u, pms, _p,iv,_c,v,env) when red_set info.i_flags fMATCH ->
     let pms = mk_clos_vect env pms in
@@ -1555,6 +1576,7 @@ let kh info tab v stk = fapp_stack(kni info tab v stk)
 let is_val v = match v.term with
 | FAtom _ | FRel _   | FInd _ | FConstruct _ | FInt _ | FFloat _ -> true
 | FFlex _ -> v.mark == Ntrl
+| FPrimitive _ -> v.mark == Cstr
 | FApp _ | FProj _ | FFix _ | FCoFix _ | FCaseT _ | FCaseInvert _ | FLambda _
 | FProd _ | FLetIn _ | FEvar _ | FArray _ | FLIFT _ | FCLOS _ -> false
 | FIrrelevant | FLOCKED -> assert false
@@ -1650,6 +1672,7 @@ and norm_head info tab m =
       | FLOCKED | FRel _ | FAtom _ | FFlex _ | FInd _ | FConstruct _
       | FApp _ | FCaseT _ | FCaseInvert _ | FLIFT _ | FCLOS _ | FInt _
       | FFloat _ -> term_of_fconstr m
+      | FPrimitive _ -> assert false (* Not a value, should have reduced *)
       | FIrrelevant -> assert false (* only introduced when converting *)
 
 and zip_term info tab m stk = match stk with
@@ -1675,7 +1698,7 @@ and zip_term info tab m stk = match stk with
     zip_term info tab (lift n m) s
 | Zupdate(_rf)::s ->
     zip_term info tab m s
-| Zprimitive(_,c,rargs, kargs)::s ->
+| Zprimitive(_,c,_,rargs, kargs)::s ->
     let kargs = List.map (fun (_,a) -> kl info tab a) kargs in
     let args =
       List.fold_left (fun args a -> kl info tab a ::args) (m::kargs) rargs in
@@ -1690,6 +1713,11 @@ let whd_val info tab v = term_of_fconstr (kh info tab v [])
 (* strong reduction *)
 let norm_val info tab v = kl info tab v
 let norm_term info tab e t = klt info tab e t
+
+let eval_lazy (info, tab) t =
+  let t = kl info tab t in
+  mk_clos (subs_id 0, Univ.Instance.empty) t
+let _ = eval_lazy_ref := eval_lazy
 
 let whd_stack infos tab m stk = match m.mark with
 | Ntrl ->
@@ -1742,7 +1770,18 @@ let unfold_ref_with_args infos tab fl v =
   match ref_value_cache infos flags tab fl with
   | Def def -> Some (def, v)
   | Primitive op when check_native_args op v ->
-    let c = match [@ocaml.warning "-4"] fl with ConstKey c -> c | _ -> assert false in
-    let rargs, a, nargs, v = get_native_args1 op c v in
-    Some (a, (Zupdate a::(Zprimitive(op,c,rargs,nargs)::v)))
+    begin
+      let c = match [@ocaml.warning "-4"] fl with ConstKey c -> c | _ -> assert false in
+      let m = {mark = Cstr; term = FFlex fl} in
+      match get_native_args op c v with
+      | ((rargs, (kd,a):: nargs), v) ->
+          assert (kd = CPrimitives.Kwhnf);
+          Some (a, (Zupdate a::(Zprimitive(op,c,m,rargs,nargs)::v)))
+      | ((rargs, []), v) ->
+          let args = Array.of_list (List.rev rargs) in
+          let (_,u) = c in
+          match FredNative.red_prim (info_env infos) () (infos, tab) op u args with
+          | Some m -> Some (m, v)
+          | None -> Some ({mark = Cstr; term = FPrimitive(op,c,m,args)}, v)
+    end
   | Undef _ | OpaqueDef _ | Primitive _ -> None
