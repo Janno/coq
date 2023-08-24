@@ -35,10 +35,11 @@ module type RedNativeEntries =
     type uinstance
 
     val get : args -> int -> elem
+    val set : args -> int -> elem -> args
     val get_int : evd -> elem -> Uint63.t
     val get_float : evd -> elem -> Float64.t
     val get_parray : evd -> elem -> elem Parray.t
-    val get_blocked : Environ.env -> evd -> elem -> elem
+    val get_blocked : Environ.env -> evd -> elem -> elem option
     val mkInt : env -> Uint63.t -> elem
     val mkFloat : env -> Float64.t -> elem
     val mkBool : env -> bool -> elem
@@ -63,7 +64,8 @@ module type RedNativeEntries =
     val mkNaN : env -> elem
     val mkArray : env -> uinstance -> elem Parray.t -> elem -> elem
 
-    val eval_lazy : lazy_info -> elem -> elem
+    val eval_full_lazy : lazy_info -> elem -> elem
+    val eval_id_lazy : lazy_info -> elem -> elem
     val mkApp : elem -> elem array -> elem
   end
 
@@ -74,7 +76,13 @@ module type RedNative =
    type evd
    type lazy_info
    type uinstance
-   val red_prim : env -> evd -> lazy_info -> CPrimitives.t -> uinstance -> args -> elem option
+
+   type result =
+     | Result of elem
+     | Progress of bool * args (* true = normal form, false = stuck *)
+     | Error
+
+   val red_prim : env -> evd -> lazy_info -> CPrimitives.t -> uinstance -> args -> result
  end
 
 module RedNative :

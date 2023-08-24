@@ -566,6 +566,9 @@ struct
   type uinstance = EConstr.EInstance.t
 
   let get = Array.get
+  let set arr i e =
+    let arr = Array.copy arr in
+    Array.set arr i e; arr
 
   let get_int evd e =
     match EConstr.kind evd e with
@@ -594,8 +597,8 @@ struct
       | _ -> false
     in
     match EConstr.kind evd e with
-    | App(h, [|_; t|]) when is_block h -> t
-    | _ -> raise Primred.NativeDestKO
+    | App(h, [|_; t|]) when is_block h -> Some t
+    | _ -> None
 
   let mkInt env i =
     mkInt i
@@ -704,7 +707,15 @@ struct
      we want. This means that [Eval hnf let_lazy _ _ (1 + 1) (fun n => n + n)]
      is reduced to [S (0 + 1 + (1 + 1))] and not [S (1 + 2)] or [4] as one may
      expect. *)
-  let eval_lazy (env, sigma, flgs) t =
+  let eval_full_lazy (env, sigma, flgs) t = (* FIXME make it full. *)
+    let ci = Evarutil.create_clos_infos env sigma flgs in
+    let ct = CClosure.create_tab () in
+    let s = (Esubst.subs_id 0, Univ.Instance.empty) in
+    let t = EConstr.Unsafe.to_constr t in
+    let v = CClosure.norm_term ci ct s t in
+    EConstr.of_constr v
+
+  let eval_id_lazy (env, sigma, flgs) t = (* FIXME make it id. *)
     let ci = Evarutil.create_clos_infos env sigma flgs in
     let ct = CClosure.create_tab () in
     let s = (Esubst.subs_id 0, Univ.Instance.empty) in
@@ -825,8 +836,8 @@ let whd_state_gen flags env sigma =
               let args = Option.get (Stack.list_of_app_stack args) in
               let args = Array.of_list args in
               match CredNative.red_prim env sigma (env, sigma, flags) p (snd const) args with
-              | Some t -> whrec (t, stack)
-              | None -> (mkApp (mkConstU const, args), stack)
+              | CredNative.Result t -> whrec (t, stack)
+              | _ -> (mkApp (mkConstU const, args), stack)
           end
        | exception NotEvaluableConst _ -> fold ()
       else fold ()
@@ -900,8 +911,8 @@ let whd_state_gen flags env sigma =
            let args = Array.of_list (Option.get (Stack.list_of_app_stack (rargs @ Stack.append_app [|x|] args))) in
            let s = extra_args @ s in
            begin match CredNative.red_prim env sigma (env, sigma, flags) p u args with
-             | Some t -> whrec (t,s)
-             | None -> ((mkApp (mkConstU kn, args), s))
+             | CredNative.Result t -> whrec (t,s)
+             | _ -> ((mkApp (mkConstU kn, args), s))
            end
        | _ -> fold ()
       end

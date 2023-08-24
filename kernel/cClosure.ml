@@ -49,6 +49,8 @@ module type RedFlagsSig = sig
   val fCONST : Constant.t -> red_kind
   val fVAR : Id.t -> red_kind
   val no_red : reds
+  val id_red : reds
+  val full_red : reds
   val red_add : reds -> red_kind -> reds
   val red_sub : reds -> red_kind -> reds
   val red_add_transparent : reds -> TransparentState.t -> reds
@@ -95,6 +97,32 @@ module RedFlags : RedFlagsSig = struct
     r_match = false;
     r_fix = false;
     r_cofix = false }
+
+  let id_red =
+    let tr_cst =
+      let open Names in
+      let mp =
+        let mp = List.rev_map Id.of_string ["Coq"; "Force"; "Force"] in
+        ModPath.MPfile (DirPath.make mp)
+      in
+      let make_constant name =
+        let kn = KerName.make mp (Label.make name) in
+        Constant.make1 kn
+      in
+      let l = List.map make_constant ["run"; "block"; "unblock"] in
+      List.fold_right Cpred.add l Cpred.empty
+    in
+    let r_const = TransparentState.{tr_var = Names.Id.Pred.empty; tr_cst} in
+    {no_red with r_delta = true; r_const}
+
+  let full_red = {
+    r_beta = true;
+    r_delta = true;
+    r_const = TransparentState.full;
+    r_zeta = true;
+    r_match = true;
+    r_fix = true;
+    r_cofix = true }
 
   let red_add red = function
     | BETA -> { red with r_beta = true }
@@ -1021,6 +1049,10 @@ module FNativeEntries =
 
     let get = Array.get
 
+    let set args i e =
+      let args = Array.copy args in
+      Array.set args i e; args
+
     let get_int () e =
       match [@ocaml.warning "-4"] e.term with
       | FInt i -> i
@@ -1036,10 +1068,28 @@ module FNativeEntries =
       | FArray (_u,t,_ty) -> t
       | _ -> assert false
 
-    let get_blocked _ () e =
+    let get_blocked env () e =
+      let of_FCLOS c e =
+        let is_block h =
+          let is_block c =
+            match [@ocaml.warning "-4"] Environ.get_primitive env c with
+            | Some CPrimitives.Block -> true
+            | _ -> false
+          in
+          match [@ocaml.warning "-4"] Constr.kind h with
+          | Const (c, _) -> is_block c
+          | _ -> false
+        in
+        match [@ocaml.warning "-4"] Constr.kind c with
+        | App(h, [|_; t|]) when is_block h ->
+            Some {mark = Red; term = FCLOS (t, e)}
+        | _ ->
+            None
+      in
       match [@ocaml.warning "-4"] e.term with
-      | FPrimitive (CPrimitives.Block, _, _, [|_; t|]) -> t
-      | _ -> assert false
+      | FPrimitive (CPrimitives.Block, _, _, [|_; t|]) -> Some t
+      | FCLOS (c, e) -> of_FCLOS c e
+      | _ -> None
 
     let dummy = {mark = Ntrl; term = FRel 0}
 
@@ -1308,8 +1358,11 @@ module FNativeEntries =
       check_array env;
       { mark = Cstr; term = FArray (u,t,ty)}
 
-    let eval_lazy lazy_info t =
-      !eval_lazy_ref lazy_info t
+    let eval_full_lazy (info, tab) t =
+      !eval_lazy_ref ({info with i_flags = RedFlags.full_red}, tab) t
+
+    let eval_id_lazy (info, tab) t =
+      !eval_lazy_ref ({info with i_flags = RedFlags.id_red}, tab) t
 
     let mkApp t args =
       { mark = Red; term = FApp(t, args) }
@@ -1493,10 +1546,14 @@ let rec knr info tab m stk =
     else (m, stk)
   | FLetIn (_,v,_,bd,e) when red_set info.i_flags fZETA ->
       knit info tab (on_fst (subs_cons v) e) bd stk
-  | FPrimitive (op, (_,u), _, args) when m.mark <> Cstr ->
+  | FPrimitive (op, ((_,u) as pc), fc, args) when m.mark <> Cstr ->
     (match FredNative.red_prim (info_env info) () (info, tab) op u args with
-     | Some m -> kni info tab m stk
-     | None -> m.mark <- Cstr; knr info tab m stk)
+     | FredNative.Result m -> kni info tab m stk
+     | FredNative.Error -> assert false
+     | FredNative.Progress (_, args) ->
+         m.mark <- Cstr;
+         m.term <- FPrimitive (op, pc, fc, args);
+         knr info tab m stk) (* TODO *)
   | FInt _ | FFloat _ | FArray _ | FPrimitive _ ->
     (match [@ocaml.warning "-4"] strip_update_shift_app m stk with
      | (_, _, Zprimitive(op,c,opm,rargs,nargs)::s) ->
@@ -1781,7 +1838,9 @@ let unfold_ref_with_args infos tab fl v =
           let args = Array.of_list (List.rev rargs) in
           let (_,u) = c in
           match FredNative.red_prim (info_env infos) () (infos, tab) op u args with
-          | Some m -> Some (m, v)
-          | None -> Some ({mark = Cstr; term = FPrimitive(op,c,m,args)}, v)
+          | FredNative.Result m -> Some (m, v)
+          | FredNative.Error -> assert false
+          | FredNative.Progress (_, args) ->
+            Some ({mark = Cstr; term = FPrimitive(op,c,m,args)}, v) (* TODO *)
     end
   | Undef _ | OpaqueDef _ | Primitive _ -> None

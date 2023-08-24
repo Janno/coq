@@ -228,6 +228,9 @@ module VNativeEntries =
     type uinstance = Univ.Instance.t
 
     let get = Array.get
+    let set arr i e =
+      let arr = Array.copy arr in
+      Array.set arr i e; arr
 
     let get_int () e =
       match e with
@@ -356,7 +359,10 @@ module VNativeEntries =
     let mkArray env u t ty =
       ARRAY (u,t,ty)
 
-    let eval_lazy lazy_info t =
+    let eval_full_lazy lazy_info t =
+      ignore (lazy_info, t); assert false (* TODO *)
+
+    let eval_id_lazy lazy_info t =
       ignore (lazy_info, t); assert false (* TODO *)
 
     let mkApp t args =
@@ -645,11 +651,11 @@ and cbv_stack_value info env = function
       | (args, appl) ->
         let stk = if List.is_empty appl then stk else stack_app appl stk in
         begin match VredNative.red_prim info.env () () op u (Array.of_list args) with
-        | Some (CONSTR (c, args)) ->
+        | VredNative.Result (CONSTR (c, args)) ->
           (* args must be moved to the stack to allow future reductions *)
           cbv_stack_value info env (CONSTR(c, [||]), stack_vect_app args stk)
-        | Some v ->  cbv_stack_value info env (v,stk)
-        | None -> mkSTACK(PRIMITIVE(op,c,Array.of_list args), stk)
+        | VredNative.Result v ->  cbv_stack_value info env (v,stk)
+        | _ -> mkSTACK(PRIMITIVE(op,c,Array.of_list args), stk)
         end
       | exception Failure _ ->
         (* partial application *)

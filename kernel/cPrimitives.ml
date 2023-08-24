@@ -290,6 +290,7 @@ and ind_or_type =
   | PITT_type : 'a prim_type * 'a -> ind_or_type
   | PITT_param : int * int list -> ind_or_type (* DeBruijn index of prenex type quantifier applied to variables (given by their index as well). *)
   | PITT_prod : Names.Name.t Context.binder_annot * ind_or_type * ind_or_type -> ind_or_type (* Dependent product *)
+(* FIXME: dependencies can be removed if it turns out we don't need them. *)
 
 let one_univ =
   AbstractContext.make Names.[|Name (Id.of_string "u")|] Constraints.empty
@@ -311,7 +312,7 @@ type prim_ind_ex = PIE : 'a prim_ind -> prim_ind_ex
 
 let types =
   let anon ty = (Context.anonR, ty) in
-  let named s ty = (Context.nameR (Names.Id.of_string s), ty) in
+  (*let named s ty = (Context.nameR (Names.Id.of_string s), ty) in*)
   let int_ty = PITT_type (PT_int63, ()) in
   let float_ty = PITT_type (PT_float64, ()) in
   let array_ty =
@@ -320,11 +321,11 @@ let types =
        (Instance.of_array [|Level.var 0|],
         PITT_param (1, [])))
   in
-  let blocked_ty =
+  let blocked_ty p =
     PITT_type
       (PT_blocked,
        (Instance.of_array [|Level.var 0|],
-        PITT_param (1, [])))
+        PITT_param (p, [])))
   in
   function
   | Int63head0 | Int63tail0 ->
@@ -379,13 +380,12 @@ let types =
   | Arraylength ->
       [anon array_ty], int_ty
   | Run ->
-      let v = Context.nameR (Names.Id.of_string "v") in
-      [named "e" (PITT_param (2, [])); anon (PITT_prod (v, PITT_param (2, []), PITT_param (2, [0])))],
-      PITT_param (1, [0])
+      [anon (blocked_ty 2); anon (PITT_prod (Context.anonR, PITT_param (2, []), PITT_param (2, [])))],
+      PITT_param (1, [])
   | Block ->
-      [anon (PITT_param (1, []))], blocked_ty
+      [anon (PITT_param (1, []))], blocked_ty 1
   | Unblock ->
-      [anon blocked_ty], PITT_param (1, [])
+      [anon (blocked_ty 1)], PITT_param (1, [])
 
 let one_param =
   (* currently if there's a parameter it's always this *)
@@ -398,10 +398,7 @@ let two_params =
   let t = Context.nameR (Names.Id.of_string "T") in
   let t_ty = Constr.mkType (Universe.make (Level.var 0)) in
   let k = Context.nameR (Names.Id.of_string "K") in
-  let k_ty =
-    let ty = Constr.mkType (Universe.make (Level.var 1)) in
-    Constr.mkProd (Context.anonR, Constr.mkRel 1, ty)
-  in
+  let k_ty = Constr.mkType (Universe.make (Level.var 1)) in
   Context.Rel.Declaration.[LocalAssum (k, k_ty); LocalAssum (t, t_ty)]
 
 let params = function
@@ -548,8 +545,8 @@ let kind t =
   let rec params n = if n <= 0 then [] else Kparam :: params (n - 1) in
   let args (_, ty) =
     match ty with
+    | PITT_param _ | PITT_prod _ | PITT_type (PT_blocked, _) -> Karg
     | PITT_type _ | PITT_ind _ -> Kwhnf
-    | PITT_param _ | PITT_prod _ -> Karg
   in
   params (nparams t) @ List.map args (fst (types t))
 
