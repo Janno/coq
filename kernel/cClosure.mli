@@ -11,7 +11,6 @@
 open Names
 open Constr
 open Environ
-open Esubst
 
 (** {6 ... } *)
 (** Delta implies all consts (both global (= by
@@ -91,7 +90,7 @@ type fconstr
 
 type finvert
 
-type 'a usubs = 'a subs Univ.puniverses
+type 'a usubs = 'a Esubst.subs Univ.puniverses
 
 type evar_repack
 
@@ -264,6 +263,6 @@ val zip : fconstr -> stack -> fconstr
 
 val term_of_process : fconstr -> stack -> constr
 
-val to_constr : lift Univ.puniverses -> fconstr -> constr
+val to_constr : Esubst.lift Univ.puniverses -> fconstr -> constr
 
 (** End of cbn debug section i*)
