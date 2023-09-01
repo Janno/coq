@@ -90,8 +90,6 @@ type fconstr
 
 type finvert
 
-type 'a usubs = 'a Esubst.subs Univ.puniverses
-
 type evar_repack
 
 type fterm =
@@ -102,23 +100,25 @@ type fterm =
   | FConstruct of pconstructor
   | FApp of fconstr * fconstr array
   | FProj of Projection.t * fconstr
-  | FFix of fixpoint * fconstr usubs
-  | FCoFix of cofixpoint * fconstr usubs
-  | FCaseT of case_info * Univ.Instance.t * constr array * case_return * fconstr * case_branch array * fconstr usubs (* predicate and branches are closures *)
-  | FCaseInvert of case_info * Univ.Instance.t * constr array * case_return * finvert * fconstr * case_branch array * fconstr usubs
-  | FLambda of int * (Name.t Context.binder_annot * constr) list * constr * fconstr usubs
-  | FProd of Name.t Context.binder_annot * fconstr * constr * fconstr usubs
-  | FLetIn of Name.t Context.binder_annot * fconstr * fconstr * constr * fconstr usubs
-  | FEvar of Evar.t * constr list * fconstr usubs * evar_repack
+  | FFix of fixpoint * usubs
+  | FCoFix of cofixpoint * usubs
+  | FCaseT of case_info * Univ.Instance.t * constr array * case_return * fconstr * case_branch array * usubs (* predicate and branches are closures *)
+  | FCaseInvert of case_info * Univ.Instance.t * constr array * case_return * finvert * fconstr * case_branch array * usubs
+  | FLambda of int * (Name.t Context.binder_annot * constr) list * constr * usubs
+  | FProd of Name.t Context.binder_annot * fconstr * constr * usubs
+  | FLetIn of Name.t Context.binder_annot * fconstr * fconstr * constr * usubs
+  | FEvar of Evar.t * constr list * usubs * evar_repack
   | FInt of Uint63.t
   | FFloat of Float64.t
   | FArray of Univ.Instance.t * fconstr Parray.t * fconstr
   | FLIFT of int * fconstr
-  | FCLOS of constr * fconstr usubs
+  | FCLOS of constr * usubs
   | FIrrelevant
   | FLOCKED
   | FPrimitive of CPrimitives.t * pconstant * fconstr * fconstr array
     (* operator, constr def, primitive as an fconstr, full array of suitably evaluated arguments *)
+
+and usubs = ((fconstr -> fconstr) option * fconstr) Esubst.subs Univ.puniverses
 
 (***********************************************************************
   s A [stack] is a context of arguments, arguments are pushed by
@@ -127,7 +127,7 @@ type 'a next_native_args = (CPrimitives.arg_kind * 'a) list
 
 type stack_member =
   | Zapp of fconstr array
-  | ZcaseT of case_info * Univ.Instance.t * constr array * case_return * case_branch array * fconstr usubs
+  | ZcaseT of case_info * Univ.Instance.t * constr array * case_return * case_branch array * usubs
   | Zproj of Projection.Repr.t
   | Zfix of fconstr * stack
   | Zprimitive of CPrimitives.t * pconstant * fconstr * fconstr list * fconstr next_native_args
@@ -146,12 +146,13 @@ val stack_args_size : stack -> int
 
 val inductive_subst : Declarations.mutual_inductive_body
   -> Univ.Instance.t
+  -> (fconstr -> fconstr) option
   -> fconstr array
-  -> fconstr usubs
+  -> usubs
 
-val usubs_lift : 'a usubs -> 'a usubs
-val usubs_liftn : int -> 'a usubs -> 'a usubs
-val usubs_cons : 'a -> 'a usubs -> 'a usubs
+val usubs_lift : usubs -> usubs
+val usubs_liftn : int -> usubs -> usubs
+val usubs_cons : (fconstr -> fconstr) option * fconstr -> usubs -> usubs
 
 (** identity if the first instance is empty *)
 val usubst_instance : 'a Univ.puniverses -> Univ.Instance.t -> Univ.Instance.t
@@ -171,7 +172,7 @@ val mk_red : fterm -> fconstr
 val fterm_of : fconstr -> fterm
 val term_of_fconstr : fconstr -> constr
 val destFLambda :
-  (fconstr usubs -> constr -> fconstr) -> fconstr -> Name.t Context.binder_annot * fconstr * fconstr
+  (usubs -> constr -> fconstr) -> fconstr -> Name.t Context.binder_annot * fconstr * fconstr
 
 (** Global and local constant cache *)
 type clos_infos
@@ -203,7 +204,7 @@ val infos_with_reds : clos_infos -> reds -> clos_infos
 val norm_val : clos_infos -> clos_tab -> fconstr -> constr
 
 (** Same as [norm_val] but for terms *)
-val norm_term : clos_infos -> clos_tab -> fconstr usubs -> Constr.constr -> Constr.constr
+val norm_term : clos_infos -> clos_tab -> usubs -> Constr.constr -> Constr.constr
 
 (** [whd_val] is for weak head normalization *)
 val whd_val : clos_infos -> clos_tab -> fconstr -> constr
@@ -252,8 +253,8 @@ val set_conv : (clos_infos -> clos_tab -> fconstr -> fconstr -> bool) -> unit
 val lift_fconstr      : int -> fconstr -> fconstr
 val lift_fconstr_vect : int -> fconstr array -> fconstr array
 
-val mk_clos      : fconstr usubs -> constr -> fconstr
-val mk_clos_vect : fconstr usubs -> constr array -> fconstr array
+val mk_clos      : usubs -> constr -> fconstr
+val mk_clos_vect : usubs -> constr array -> fconstr array
 
 val kni: clos_infos -> clos_tab -> fconstr -> stack -> fconstr * stack
 val knr: clos_infos -> clos_tab -> fconstr -> stack -> fconstr * stack

@@ -249,8 +249,6 @@ let neutr = function
 | Ntrl -> Ntrl
 | Red | Cstr -> Red
 
-type 'a usubs = 'a Esubst.subs Univ.puniverses
-
 type evar_repack = Evar.t * constr list -> constr
 
 type fconstr = {
@@ -266,23 +264,25 @@ and fterm =
   | FConstruct of pconstructor
   | FApp of fconstr * fconstr array
   | FProj of Projection.t * fconstr
-  | FFix of fixpoint * fconstr usubs
-  | FCoFix of cofixpoint * fconstr usubs
-  | FCaseT of case_info * Univ.Instance.t * constr array * case_return * fconstr * case_branch array * fconstr usubs (* predicate and branches are closures *)
-  | FCaseInvert of case_info * Univ.Instance.t * constr array * case_return * finvert * fconstr * case_branch array * fconstr usubs
-  | FLambda of int * (Name.t Context.binder_annot * constr) list * constr * fconstr usubs
-  | FProd of Name.t Context.binder_annot * fconstr * constr * fconstr usubs
-  | FLetIn of Name.t Context.binder_annot * fconstr * fconstr * constr * fconstr usubs
-  | FEvar of Evar.t * constr list * fconstr usubs * evar_repack
+  | FFix of fixpoint * usubs
+  | FCoFix of cofixpoint * usubs
+  | FCaseT of case_info * Univ.Instance.t * constr array * case_return * fconstr * case_branch array * usubs (* predicate and branches are closures *)
+  | FCaseInvert of case_info * Univ.Instance.t * constr array * case_return * finvert * fconstr * case_branch array * usubs
+  | FLambda of int * (Name.t Context.binder_annot * constr) list * constr * usubs
+  | FProd of Name.t Context.binder_annot * fconstr * constr * usubs
+  | FLetIn of Name.t Context.binder_annot * fconstr * fconstr * constr * usubs
+  | FEvar of Evar.t * constr list * usubs * evar_repack
   | FInt of Uint63.t
   | FFloat of Float64.t
   | FArray of Univ.Instance.t * fconstr Parray.t * fconstr
   | FLIFT of int * fconstr
-  | FCLOS of constr * fconstr usubs
+  | FCLOS of constr * usubs
   | FIrrelevant
   | FLOCKED
   | FPrimitive of CPrimitives.t * pconstant * fconstr * fconstr array
     (* operator, constr def, primitive as an fconstr, full array of suitably evaluated arguments *)
+
+and usubs = ((fconstr -> fconstr) option * fconstr) Esubst.subs Univ.puniverses
 
 and finvert = fconstr array
 
@@ -308,6 +308,7 @@ type infos_cache = {
 
 type clos_infos = {
   i_flags : reds;
+  i_full : bool;
   i_relevances : Sorts.relevance Range.t;
   i_cache : infos_cache }
 
@@ -316,6 +317,7 @@ type clos_tab = (fconstr, Empty.t) constant_def KeyTable.t
 let info_flags info = info.i_flags
 let info_env info = info.i_cache.i_env
 let info_univs info = info.i_cache.i_univs
+let info_full info = info.i_full
 
 let push_relevance infos r =
   { infos with i_relevances = Range.cons r.Context.binder_relevance infos.i_relevances }
@@ -334,7 +336,7 @@ type 'a next_native_args = (CPrimitives.arg_kind * 'a) list
 
 type stack_member =
   | Zapp of fconstr array
-  | ZcaseT of case_info * Univ.Instance.t * constr array * case_return * case_branch array * fconstr usubs
+  | ZcaseT of case_info * Univ.Instance.t * constr array * case_return * case_branch array * usubs
   | Zproj of Projection.Repr.t
   | Zfix of fconstr * stack
   | Zprimitive of CPrimitives.t * pconstant * fconstr * fconstr list * fconstr next_native_args
@@ -388,9 +390,10 @@ let lift_fconstr k f =
 let lift_fconstr_vect k v =
   if Int.equal k 0 then v else Array.Fun1.map lft_fconstr k v
 
-let clos_rel (e, _) i =
+let clos_rel ((e, _) : usubs) i =
   match Esubst.expand_rel i e with
-    | Inl(n,mt) -> lift_fconstr n mt
+    | Inl(n,(None,mt)) -> lift_fconstr n mt
+    | Inl(n,(Some f,mt)) -> lift_fconstr n (f mt)
     | Inr(k,None) -> {mark=Ntrl; term= FRel k}
     | Inr(k,Some p) ->
         lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
@@ -457,7 +460,7 @@ let usubst_sort (_,u) s = match s with
 
 (* Optimization: do not enclose variables in a closure.
    Makes variable access much faster *)
-let mk_clos (e:_ usubs) t =
+let mk_clos (e:usubs) t =
   match kind t with
     | Rel i -> clos_rel e i
     | Var x -> {mark = Red; term = FFlex (VarKey x) }
@@ -682,7 +685,7 @@ and to_constr_case (lfts,_ as ulfts) ci u pms p iv c ve env =
             Array.map f_ctx ve)
 
 and comp_subs (el,u) (s,u') =
-  Esubst.lift_subst (fun el c -> lazy (to_constr (el,u) c)) el s, u'
+  Esubst.lift_subst (fun el (f, c) -> lazy (to_constr (el,u) (match f with None -> c | Some f -> f c))) el s, u'
 
 (* This function defines the correspondence between constr and
    fconstr. When we find a closure whose substitution is the identity,
@@ -778,33 +781,33 @@ let get_nth_arg head n stk =
 
 let usubs_cons x (s,u) = Esubst.subs_cons x s, u
 
-let rec subs_consn v i n s =
+let rec subs_consn oenvred v i n s =
   if Int.equal i n then s
-  else subs_consn v (i + 1) n (Esubst.subs_cons v.(i) s)
+  else subs_consn oenvred v (i + 1) n (Esubst.subs_cons (oenvred, v.(i)) s)
 
-let usubs_consn v i n s = on_fst (subs_consn v i n) s
+let usubs_consn oenvred v i n s = on_fst (subs_consn oenvred v i n) s
 
-let usubs_consv v s =
-  usubs_consn v 0 (Array.length v) s
+let usubs_consv oenvred v s =
+  usubs_consn oenvred v 0 (Array.length v) s
 
 (* Beta reduction: look for an applied argument in the stack.
    Since the encountered update marks are removed, h must be a whnf *)
-let rec get_args n tys f e = function
+let rec get_args oenvred n tys f e = function
     | Zupdate r :: s ->
         (** The stack contains [Zupdate] mark only if in sharing mode *)
         let () = update r Cstr (FLambda(n,tys,f,e)) in
-        get_args n tys f e s
+        get_args oenvred n tys f e s
     | Zshift k :: s ->
-        get_args n tys f (usubs_shft (k,e)) s
+        get_args oenvred n tys f (usubs_shft (k,e)) s
     | Zapp l :: s ->
         let na = Array.length l in
-        if n == na then (Inl (usubs_consn l 0 na e), s)
+        if n == na then (Inl (usubs_consn oenvred l 0 na e), s)
         else if n < na then (* more arguments *)
           let eargs = Array.sub l n (na-n) in
-          (Inl (usubs_consn l 0 n e), Zapp eargs :: s)
+          (Inl (usubs_consn oenvred l 0 n e), Zapp eargs :: s)
         else (* more lambdas *)
           let etys = List.skipn na tys in
-          get_args (n-na) etys f (usubs_consn l 0 na e) s
+          get_args oenvred (n-na) etys f (usubs_consn oenvred l 0 na e) s
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zprimitive _) :: _ | []) as stk ->
       (Inr {mark=Cstr; term=FLambda(n,tys,f,e)}, stk)
 
@@ -892,20 +895,20 @@ let drop_parameters depth n argstk =
   (* we know that n < stack_args_size(argstk) (if well-typed term) *)
   anomaly (Pp.str "ill-typed term: found a match on a partially applied constructor.")
 
-let inductive_subst mib u pms =
+let inductive_subst mib u oenvred pms =
   let rec mk_pms i ctx = match ctx with
   | [] -> Esubst.subs_id 0
   | RelDecl.LocalAssum _ :: ctx ->
     let subs = mk_pms (i - 1) ctx in
-    Esubst.subs_cons pms.(i) subs
+    Esubst.subs_cons (oenvred, pms.(i)) subs
   | RelDecl.LocalDef (_, c, _) :: ctx ->
     let subs = mk_pms i ctx in
-    Esubst.subs_cons (mk_clos (subs,u) c) subs
+    Esubst.subs_cons (oenvred, mk_clos (subs,u) c) subs
   in
   mk_pms (Array.length pms - 1) mib.mind_params_ctxt, u
 
 (* Iota-reduction: feed the arguments of the constructor to the branch *)
-let get_branch infos depth ci u pms (ind, c) br e args =
+let get_branch oenvred infos depth ci u pms (ind, c) br (e : usubs)  args =
   let i = c - 1 in
   let args = drop_parameters depth ci.ci_npar args in
   let (_nas, br) = br.(i) in
@@ -914,7 +917,7 @@ let get_branch infos depth ci u pms (ind, c) br e args =
       environment to know the value of the branch. *)
     let rec push e stk = match stk with
     | [] -> e
-    | Zapp v :: stk -> push (usubs_consv v e) stk
+    | Zapp v :: stk -> push (usubs_consv oenvred v e) stk
     | (Zshift _ | ZcaseT _ | Zproj _ | Zfix _ | Zupdate _ | Zprimitive _) :: _ ->
       assert false
     in
@@ -933,7 +936,7 @@ let get_branch infos depth ci u pms (ind, c) br e args =
     | Zshift _ | ZcaseT _ | Zproj _ | Zfix _ | Zupdate _ | Zprimitive _ ->
       assert false
     in
-    let ind_subst = inductive_subst mib u (Array.map (mk_clos e) pms) in
+    let ind_subst = inductive_subst mib u oenvred (Array.map (mk_clos e) pms) in
     let args = Array.concat (List.map map args) in
     let rec push i e = function
     | [] -> []
@@ -944,12 +947,12 @@ let get_branch infos depth ci u pms (ind, c) br e args =
       let ans = push i e ctx in
       let b = subst_instance_constr u b in
       let s = Array.rev_of_list ans in
-      let e = usubs_consv s ind_subst in
+      let e = usubs_consv oenvred s ind_subst in
       let v = mk_clos e b in
       v :: ans
     in
     let ext = push (Array.length args - 1) [] ctx in
-    (br, usubs_consv (Array.rev_of_list ext) e)
+    (br, usubs_consv oenvred (Array.rev_of_list ext) e)
 
 (** [eta_expand_ind_stack env ind c s t] computes stacks corresponding
     to the conversion of the eta expansion of t, considered as an inhabitant
@@ -999,7 +1002,7 @@ let rec project_nth_arg n = function
  *    -> (S. FCLOS(F0,S) . ... . FCLOS(Fn-1,S), Ti)
  *)
 (* does not deal with FLIFT *)
-let contract_fix_vect fix =
+let contract_fix_vect oenvred fix =
   let (thisbody, make_body, env, nfix) =
     match [@ocaml.warning "-4"] fix with
       | FFix (((reci,i),(_,_,bds as rdcl)),env) ->
@@ -1016,7 +1019,7 @@ let contract_fix_vect fix =
   in
   let rec mk_subs env i =
     if Int.equal i nfix then env
-    else mk_subs (Esubst.subs_cons (make_body i) env) (i + 1)
+    else mk_subs (Esubst.subs_cons (oenvred, make_body i) env) (i + 1) (* FIXME *)
   in
   (on_fst (fun env -> mk_subs env 0) env, thisbody)
 
@@ -1357,11 +1360,11 @@ module FNativeEntries =
       check_array env;
       { mark = Cstr; term = FArray (u,t,ty)}
 
-    let eval_full_lazy (info, tab) t =
-      !eval_lazy_ref ({info with i_flags = RedFlags.full_red}, tab) t
+    let eval_full_lazy (info, _) t =
+      !eval_lazy_ref {info with i_flags = RedFlags.full_red; i_full = true} t
 
-    let eval_id_lazy (info, tab) t =
-      !eval_lazy_ref ({info with i_flags = RedFlags.id_red}, tab) t
+    let eval_id_lazy (info, _) t =
+      !eval_lazy_ref {info with i_flags = RedFlags.id_red; i_full = false} t
 
     let mkApp t args =
       { mark = Red; term = FApp(t, args) }
@@ -1431,7 +1434,7 @@ let rec knh info m stk =
         (m, stk)
 
 (* The same for pure terms *)
-and knht info (e : fconstr usubs) t stk =
+and knht info (e : usubs) t stk =
   match kind t with
     | App(a,b) ->
         knht info e a (append_stack (mk_clos_vect e b) stk)
@@ -1486,9 +1489,14 @@ let set_conv f = conv := f
 
 (* Computes a weak head normal form from the result of knh. *)
 let rec knr info tab m stk =
+  let oenvred =
+    if info_full info then
+      Some (fun m -> !eval_lazy_ref info m)
+    else None
+  in
   match m.term with
   | FLambda(n,tys,f,e) when red_set info.i_flags fBETA ->
-      (match get_args n tys f e stk with
+      (match get_args oenvred n tys f e stk with
           Inl e', s -> knit info tab e' f s
         | Inr lam, s -> (lam,s))
   | FFlex fl when red_set info.i_flags fDELTA ->
@@ -1516,12 +1524,12 @@ let rec knr info tab m stk =
       (match [@ocaml.warning "-4"] strip_update_shift_app m stk with
         | (depth, args, ZcaseT(ci,u,pms,_,br,e)::s) when use_match ->
             assert (ci.ci_npar>=0);
-            let (br, e) = get_branch info depth ci u pms c br e args in
+            let (br, e) = get_branch oenvred info depth ci u pms c br e args in
             knit info tab e br s
         | (_, cargs, Zfix(fx,par)::s) when use_fix ->
             let rarg = fapp_stack(m,cargs) in
             let stk' = par @ append_stack [|rarg|] s in
-            let (fxe,fxbd) = contract_fix_vect fx.term in
+            let (fxe,fxbd) = contract_fix_vect oenvred fx.term in
             knit info tab fxe fxbd stk'
         | (depth, args, Zproj p::s) when use_match ->
             let rargs = drop_parameters depth (Projection.Repr.npars p) args in
@@ -1539,12 +1547,12 @@ let rec knr info tab m stk =
     else if red_set info.i_flags fCOFIX then
       (match strip_update_shift_app m stk with
         | (_, args, (((ZcaseT _|Zproj _)::_) as stk')) ->
-            let (fxe,fxbd) = contract_fix_vect m.term in
+            let (fxe,fxbd) = contract_fix_vect oenvred m.term in
             knit info tab fxe fxbd (args@stk')
         | (_,args, ((Zapp _ | Zfix _ | Zshift _ | Zupdate _ | Zprimitive _) :: _ | [] as s)) -> (m,args@s))
     else (m, stk)
   | FLetIn (_,v,_,bd,e) when red_set info.i_flags fZETA ->
-      knit info tab (on_fst (Esubst.subs_cons v) e) bd stk
+      knit info tab (on_fst (Esubst.subs_cons (oenvred, v)) e) bd stk
   | FPrimitive (op, ((_,u) as pc), fc, args) when m.mark <> Cstr ->
     (match FredNative.red_prim (info_env info) () (info, tab) op u args with
      | FredNative.Result m -> kni info tab m stk
@@ -1569,7 +1577,7 @@ let rec knr info tab m stk =
   | FCaseInvert (ci, u, pms, _p,iv,_c,v,env) when red_set info.i_flags fMATCH ->
     let pms = mk_clos_vect env pms in
     let u = usubst_instance env u in
-    begin match case_inversion info tab ci u pms iv v with
+    begin match case_inversion oenvred info tab ci u pms iv v with
       | Some c -> knit info tab env c stk
       | None -> (m, stk)
     end
@@ -1589,11 +1597,11 @@ let rec knr info tab m stk =
 and kni info tab m stk =
   let (hm,s) = knh info m stk in
   knr info tab hm s
-and knit info tab (e : fconstr usubs) t stk =
+and knit info tab (e : usubs) t stk =
   let (ht,s) = knht info e t stk in
   knr info tab ht s
 
-and case_inversion info tab ci u params indices v =
+and case_inversion oenvred info tab ci u params indices v =
   let open Declarations in
   (* No binders / lets at all in the unique branch *)
   let v = match v with
@@ -1604,7 +1612,7 @@ and case_inversion info tab ci u params indices v =
   else
     let env = info_env info in
     let ind = ci.ci_ind in
-    let psubst = subs_consn params 0 ci.ci_npar (Esubst.subs_id 0) in
+    let psubst = subs_consn oenvred params 0 ci.ci_npar (Esubst.subs_id 0) in
     let mib = Environ.lookup_mind (fst ind) env in
     let mip = mib.mind_packets.(snd ind) in
     (* indtyping enforces 1 ctor with no letins in the context *)
@@ -1645,10 +1653,11 @@ let rec kl info tab m =
     let () = if share then ignore (fapp_stack (nm, s)) in (* to unlock Zupdates! *)
     zip_term info tab (norm_head info tab nm) s
 
-and klt info tab (e : fconstr usubs) t = match kind t with
+and klt info tab (e : usubs) t = match kind t with
 | Rel i ->
   begin match Esubst.expand_rel i (fst e) with
-  | Inl (n, mt) -> kl info tab @@ lift_fconstr n mt
+  | Inl (n, (None, mt)) -> kl info tab @@ lift_fconstr n mt
+  | Inl (n, (Some f, mt)) -> kl info tab @@ lift_fconstr n (f mt)
   | Inr (k, None) -> if Int.equal k i then t else mkRel k
   | Inr (k, Some p) -> kl info tab @@ lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
   end
@@ -1770,7 +1779,8 @@ let whd_val info tab v = term_of_fconstr (kh info tab v [])
 let norm_val info tab v = kl info tab v
 let norm_term info tab e t = klt info tab e t
 
-let eval_lazy (info, tab) t =
+let eval_lazy info t =
+  let tab = KeyTable.create 17 in
   let t = kl info tab t in
   mk_clos (Esubst.subs_id 0, Univ.Instance.empty) t
 let _ = eval_lazy_ref := eval_lazy
@@ -1800,7 +1810,7 @@ let create_conv_infos ?univs ?(evars=default_evar_handler) flgs env =
     i_univs = univs;
     i_mode = Conversion;
   } in
-  { i_flags = flgs; i_relevances = Range.empty; i_cache = cache }
+  { i_flags = flgs; i_full = false; i_relevances = Range.empty; i_cache = cache }
 
 let create_clos_infos ?univs ?(evars=default_evar_handler) flgs env =
   let univs = Option.default (universes env) univs in
@@ -1812,7 +1822,7 @@ let create_clos_infos ?univs ?(evars=default_evar_handler) flgs env =
     i_univs = univs;
     i_mode = Reduction;
   } in
-  { i_flags = flgs; i_relevances = Range.empty; i_cache = cache }
+  { i_flags = flgs; i_full = false; i_relevances = Range.empty; i_cache = cache }
 
 let create_tab () = KeyTable.create 17
 

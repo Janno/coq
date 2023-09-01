@@ -72,7 +72,7 @@ type lft_constr_stack_elt =
     Zlapp of (lift * fconstr) array
   | Zlproj of Projection.Repr.t * lift
   | Zlfix of (lift * fconstr) * lft_constr_stack
-  | Zlcase of case_info * lift * Univ.Instance.t * constr array * case_return * case_branch array * fconstr usubs
+  | Zlcase of case_info * lift * Univ.Instance.t * constr array * case_return * case_branch array * usubs
   | Zlprimitive of
      CPrimitives.t * pconstant * lft_fconstr list * lft_fconstr next_native_args
 and lft_constr_stack = lft_constr_stack_elt list
@@ -285,7 +285,7 @@ let esubst_of_rel_context_instance_list ctx u args e =
   | LocalDef (_, c, _) :: ctx ->
     let c = Vars.subst_instance_constr u c in
     let c = mk_clos args c in
-    aux lft (usubs_cons c e) (usubs_cons c args) ctx
+    aux lft (usubs_cons (None, c) e) (usubs_cons (None, c) args) ctx
   in
   aux 0 e args (List.rev ctx)
 
@@ -836,8 +836,8 @@ and convert_return_clause mib mip l2r infos e1 e2 l1 l2 u1 u2 pms1 pms2 p1 p2 cu
     if Int.equal mip.mind_nrealargs mip.mind_nrealdecls then None
     else
       let ctx, _ = List.chop mip.mind_nrealdecls mip.mind_arity_ctxt in
-      let pms1 = inductive_subst mib u1 pms1 in
-      let pms2 = inductive_subst mib u1 pms2 in
+      let pms1 = inductive_subst mib u1 None pms1 in
+      let pms2 = inductive_subst mib u1 None pms2 in
       let open Context.Rel.Declaration in
       (* Add the inductive binder *)
       let dummy = mkProp in
@@ -852,8 +852,8 @@ and convert_branches mib mip l2r infos e1 e2 lft1 lft2 u1 u2 pms1 pms2 br1 br2 c
       if Int.equal mip.mind_consnrealdecls.(i) mip.mind_consnrealargs.(i) then None
       else
         let ctx, _ = List.chop mip.mind_consnrealdecls.(i) ctx in
-        let pms1 = inductive_subst mib u1 pms1 in
-        let pms2 = inductive_subst mib u2 pms2 in
+        let pms1 = inductive_subst mib u1 None pms1 in
+        let pms2 = inductive_subst mib u2 None pms2 in
         Some (ctx, u1, u2, pms1, pms2)
     in
     let c1 = br1.(i) in
