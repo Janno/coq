@@ -1573,7 +1573,10 @@ let rec knr info tab m stk =
            assert (kd = CPrimitives.Kwhnf);
            kni info tab a (Zprimitive(op,c,opm,rargs,nargs)::s)
        end
-     | (_, _, s) -> (m, s))
+     | (_, rs, s) ->
+       (m, List.rev_append rs s))
+       (* ^ Used to be [(m, s)], but that is not good enough for [FPrimitive], since it can have arguments. *)
+       (* Here, we don't want [strip_update_shift_app] to handle [Zapp]... *)
   | FCaseInvert (ci, u, pms, _p,iv,_c,v,env) when red_set info.i_flags fMATCH ->
     let pms = mk_clos_vect env pms in
     let u = usubst_instance env u in
