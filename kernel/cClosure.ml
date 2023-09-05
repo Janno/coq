@@ -346,6 +346,79 @@ type stack_member =
 
 and stack = stack_member list
 
+let table_key_to_string k =
+  match k with
+  | Names.ConstKey (c, _) -> Names.Constant.to_string c
+  | Names.VarKey i -> Printf.sprintf "\"var:%s\"" (Names.Id.to_string i)
+  | Names.RelKey i -> Printf.sprintf "\"rel:%i\"" i
+
+let constr_to_string c = Pp.string_of_ppcmds (Constr.debug_print c)
+
+let [@ocaml.warning "-32"] rec to_string (c : fconstr) : string =
+  (match c.mark with
+   | Ntrl -> "{mark=Ntrl; term="
+   | Cstr -> "{mark=Cstr; term="
+   | Red -> "{mark=Red; term="
+  )
+  ^
+  (match c.term with
+  | FRel i -> Printf.sprintf "FRel %i" i
+  | FAtom c -> Printf.sprintf "FAtom (%s)" (constr_to_string c)
+  | FFlex k -> Printf.sprintf "FFlex %s" (table_key_to_string k)
+  | FInd _ -> Printf.sprintf "FInd _"
+  | FConstruct (((i,n),m),_) -> Printf.sprintf "FConstruct (%s,%i,%i)" (Names.MutInd.to_string i) n m
+  | FApp (h, args) -> Printf.sprintf "FApp (%s, [|%s|])" (to_string h) (String.concat ";" (Array.to_list (Array.map to_string args)))
+  | FProj (_, c) -> Printf.sprintf "FProj (_, %s)" (to_string c)
+  | FFix (_, u) -> Printf.sprintf "FFix (_, %s)" (usubs_to_string u)
+  | FCoFix (_, _) -> Printf.sprintf "FCoFix (_, _)"
+  | FCaseT (_, _, xs, _, t, bs, u) ->
+    Printf.sprintf "FCaseT (_, _, [| %s |], _, %s, [| %s |], %s)"
+      (String.concat "; " (Array.to_list (Array.map constr_to_string xs)))
+      (to_string t)
+      (String.concat "; " (Array.to_list (Array.map (fun (_, c) -> constr_to_string c) bs)))
+      (usubs_to_string u)
+  | FCaseInvert (_, _, _, _, _, _, _, _) -> Printf.sprintf "FCaseInvert (_, _, _, _, _, _, _, _)"
+  | FLambda (_, _, b, u) -> Printf.sprintf "FLambda (_, _, %s, %s)" (constr_to_string b) (usubs_to_string u)
+  | FProd (_, _, b, u) -> Printf.sprintf "FProd (_, _, %s, %s)" (constr_to_string b) (usubs_to_string u)
+  | FLetIn (_, a, b, c, u) -> Printf.sprintf "FLetIn (_, %s, %s, %s, %s)" (to_string a) (to_string b) (constr_to_string c) (usubs_to_string u)
+  | FEvar (_, _, _, _) -> Printf.sprintf "FEvar (_, _, _, _)"
+  | FInt _ -> Printf.sprintf "FInt _"
+  | FFloat _ -> Printf.sprintf "FFloat _"
+  | FArray (_, _, _) -> Printf.sprintf "FArray (_, _, _)"
+  | FLIFT (i, c) -> Printf.sprintf "FLIFT (%i, %s)" i (to_string c)
+  | FCLOS (c, u) -> Printf.sprintf "FCLOS (%s, %s)" (constr_to_string c) (usubs_to_string u)
+  | FIrrelevant -> Printf.sprintf "FIrrelevant"
+  | FLOCKED -> Printf.sprintf "FLOCKED"
+  | FPrimitive (p, _, _, args) -> Printf.sprintf "FPrimitive (%s, _, _, [|%s|])" (CPrimitives.to_string p) (String.concat ";" (Array.to_list (Array.map to_string args)))
+  )
+  ^ "}"
+
+and [@ocaml.warning "-32"] usubs_to_string (u : usubs) =
+  let (ls, i) = Esubst.Internal.repr (fst u) in
+  let aux v =
+    let open Esubst.Internal in
+    match v with
+    | REL i -> Printf.sprintf "REL(%i)" i
+    | VAL (i, (o, c)) ->
+      Printf.sprintf "VAL(%i,(%s,%s))" i (if Option.has_some o then "Some _" else "None") (to_string c)
+  in
+  String.concat " :: " (List.map aux ls) ^ (Printf.sprintf " :: [] @ %i" i)
+
+let [@ocaml.warning "-32"] stack_to_string s =
+  let member_to_string m =
+    match m with
+    | Zapp args -> Printf.sprintf "Zapp{%i} [|%s|]"
+                     (Array.length args)
+                     (String.concat "; " (Array.to_list (Array.map to_string args)))
+    | ZcaseT (_,_,_,_,_,_) -> "ZcaseT _"
+    | Zproj _ -> "Zproj _"
+    | Zfix _ -> "Zfix _"
+    | Zprimitive (op,_,_,_,_) -> Printf.sprintf "Zprimitive (%s,_,_,_,_)" (CPrimitives.to_string op)
+    | Zshift i -> Printf.sprintf "Zshift %i" i
+    | Zupdate _ -> "Zupdate _"
+  in
+  String.concat " :: " (List.map member_to_string s) ^ " :: []"
+
 let empty_stack = []
 let append_stack v s =
   if Int.equal (Array.length v) 0 then s else
