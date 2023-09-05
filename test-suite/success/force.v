@@ -4,7 +4,7 @@ Require Import Force.Force.
 
 (**** UNIVERSES ****)
 
-Definition check_run@{u1 u2} : forall (T : Type@{u1}) (K : T -> Type@{u2}) (e : T), (forall v : T, K v) -> K e := @run.
+Definition check_run@{u1 u2} : forall (T : Type@{u1}) (K : Type@{u2}), Blocked T -> (T -> K) -> K := @run.
 Definition check_Blocked@{u} : Type@{u} -> Type@{u} := Blocked.
 Definition check_block@{u} : forall (T : Type@{u}), T -> Blocked@{u} T := @block.
 Definition check_unblock@{u} : forall (T : Type@{u}), Blocked@{u} T -> T := @unblock.
@@ -12,53 +12,91 @@ Definition check_unblock@{u} : forall (T : Type@{u}), Blocked@{u} T -> T := @unb
 (**** EVALUATION ****)
 
 Ltac syn_refl := lazymatch goal with |- ?t = ?t => exact eq_refl end.
-Notation SIMPL t := (ltac:(let x := eval simpl in t in exact x)) (only parsing).
-Notation LAZY t := (ltac:(let x := eval lazy  in t in exact x)) (only parsing).
-Notation HNF t := (ltac:(let x := eval hnf in t in exact x)) (only parsing).
-Notation CBN t := (ltac:(let x := eval cbn in t in exact x)) (only parsing).
-Notation CBV t := (ltac:(let x := eval cbv in t in exact x)) (only parsing).
-Notation VM_COMPUTE t := (ltac:(let x := eval vm_compute in t in exact x)) (only parsing).
-Notation NATIVE_COMPUTE t := (ltac:(let x := eval native_compute in t in exact x)) (only parsing).
+Notation LAZY t := (ltac:(let x := eval lazy in t in exact x)) (only parsing).
+Notation WHNF t := (ltac:(let x := eval lazywhnf  in t in exact x)) (only parsing).
 
-Goal SIMPL (run (1 + 1) (fun x => x + x)) = 4.
+Goal LAZY ((fun f => f (1 + 1)) block) = block (1 + 1).
 Proof. syn_refl. Qed.
 
-Goal SIMPL (run (1 + 1) (fun x => x + x)) = 4.
+Goal LAZY ((fun f => f (1 + 1)) (fun x => block x)) = block (1 + 1).
 Proof. syn_refl. Qed.
 
-Goal LAZY (run (1 + 1) (fun x => x + x)) = 4.
+Goal WHNF ((fun f => f (1 + 1)) block) = block (1 + 1).
 Proof. syn_refl. Qed.
 
-Goal HNF (run (1 + 1) (fun x => x + x)) = S (0 + 1 + (1 + 1)).
+Goal WHNF ((fun f => f (1 + 1)) (fun x => block x)) = block (1 + 1).
 Proof. syn_refl. Qed.
 
-Goal CBN (run (1 + 1) (fun x => x + x)) = 4.
+Eval lazywhnf in run (block 0) (fun x => x).
+Eval lazywhnf in run (block (1+1)) (fun x => x).
+
+Eval lazywhnf in block (run (let n := 1 in block n) (fun x : nat => x)).
+
+Eval lazywhnf in block (run (let x := (fun x => x) tt in block x) (fun x => x)).
+
+Eval lazywhnf in block (unblock (let x := (fun x => x) tt in block x)).
+(*
+block (unblock (let x := (fun x => x) tt in block x)) @ ε | ∅ --{whnf}-->
+block @ (unblock (let x := (fun x => x) tt in block x)) . ε | ∅ --{whnf}-->
+
+  unblock (let x := (fun x => x) tt in block x) @ ε | ∅ --{id}-->
+  unblock @ (let x := (fun x => x) tt in block x) . ε | ∅ --{id}-->
+
+    let x := (fun x => x) tt in block x @ ε | ∅ --{full}-->
+    block x @ ε | ∅[x{full} := <(fun x => x) tt, ∅>] --{full}-->
+
+      x @ ε | ∅[x{full} := <(fun x => x) tt, ∅>] --{id}-->
+
+        (λ x => x) tt @ ε | ∅ --{full}-->
+        λ x => x @ tt . ε | ∅ --{full}-->
+        x @ ε | ∅[x{full} := <tt, ∅>] --{full}-->
+
+          tt @ ε | ∅ --{full}--> (value)
+
+        tt @ ε | ∅[x{full} := <tt, ∅>] --{full}--> (value)
+
+      tt @ ε | ∅[x{full} := <tt, ∅>] --{id}--> (value, updated closure)
+
+    block tt @ ε | ∅[x{full} := <tt, ∅>] --{full}-->
+
+  unblock @ block tt . ε | ∅ --{id}-->
+  tt @ ε | ∅ --{id}-->
+
+block @ tt . ε | ∅ --{whnf}--> (done)
+*)
+
+Goal WHNF (block (run (let n := 2 + 2 in block n) (fun x : nat => 2 * 1)))
+        = (block ((fun _ : nat => 2 * 1) 4)).
 Proof. syn_refl. Qed.
 
-(* FIXME: not implemented. *)
-(*Goal CBV (run (1 + 1) (fun x => x + x)) = 4.*)
-(*Proof. syn_refl. Qed.*)
+Goal WHNF (block (run ((fun n => block n) (2 + 2)) (fun x : nat => 2 * 1)))
+        = (block ((fun _ : nat => 2 * 1) 4)).
+Proof. syn_refl. Qed.
 
-(* FIXME: not implemented. *)
-(*Goal VM_COMPUTE (run (1 + 1) (fun x => x + x)) = 4.*)
-(*Proof. syn_refl. Qed.*)
+Goal WHNF (block (run ((fun n => block (n + 1)) (2 + 2)) (fun x : nat => 2 * 1)))
+        = (block ((fun _ : nat => 2 * 1) (4 + 1))).
+Proof. syn_refl. Qed.
 
-(* FIXME: not implemented. *)
-(*Goal NATIVE_COMPUTE (run (1 + 1) (fun x => x + x)) = 4.*)
-(*Proof. syn_refl. Qed.*)
+Goal WHNF (block (run (let n := 2 + 2 in block (n + 1)) (fun x : nat => 2 * 1)))
+        = (block ((fun _ : nat => 2 * 1) (4 + 1))).
+Proof. syn_refl. Qed.
 
-(**** TEST ****)
+Goal WHNF (block (run ((fun n => block (n + 1)) 2) (fun x : nat => 2 * 1)))
+        = (block ((fun _ : nat => 2 * 1) (2 + 1))).
+Proof. syn_refl. Qed.
 
-Axiom F : run (1 + 1) (fun x => forall y, y = x).
-Goal True. let t := constr:(F 0) in match type of t with 0 = 2 => idtac end. Abort.
+Goal WHNF (block (unblock (let n := 0 + 0 in block (n + n))))
+        = block (0 + 0).
+Proof. syn_refl. Qed.
 
-Axiom G : let x := 1 + 1 in forall y, y = x.
-Goal True. let t := constr:(G 0) in match type of t with 0 = 1 + 1 => idtac end. Abort.
+Goal LAZY (run (block (1 + 1)) (fun x => x + x)) = 4.
+Proof. syn_refl. Qed.
 
-Axiom H : (fun x => forall y, y = x) (1 + 1).
-Goal True. let t := constr:(H 0) in match type of t with 0 = 1 + 1 => idtac end. Abort.
+Goal LAZY (run (block (1 + 1)) (fun x => x + x)) = 4.
+Proof. syn_refl. Qed.
 
-(**** BLOCKED ****)
+Goal LAZY (run (block (1 + 1)) (fun x => x + x)) = 4.
+Proof. syn_refl. Qed.
 
 Goal LAZY (block (2 + 2)) = block (2 + 2).
 Proof. syn_refl. Qed.
@@ -78,11 +116,27 @@ Proof. syn_refl. Qed.
 Goal LAZY (unblock (block (fun x => (2 + 2) + x))) = fun x => S (S (S (S x))).
 Proof. syn_refl. Qed.
 
-Goal HNF (block (2 + 2)) = block (2 + 2).
+Goal WHNF (run (let x := 1 + 1 in block (x + 1)) (fun x => forall y, y = x))
+        = forall y, y = 2 + 1.
 Proof. syn_refl. Qed.
 
-Goal SIMPL (block (2 + 2)) = block 4. (* FIXME? *)
-Proof. syn_refl. Qed.
+Set Printing Width 1000.
+Section AllArgs.
+  Context (b : Blocked (nat -> nat)).
+  Eval lazy in unblock b 0.
 
-Goal CBN (block (2 + 2)) = block 4. (* FIXME? *)
-Proof. syn_refl. Qed.
+  Goal LAZY (unblock b 0) = unblock b 0.
+  Proof. syn_refl. Qed.
+End AllArgs.
+
+(* Axiom F : run (let x := 1 + 1 in block (x + 1)) (fun x => forall y, y = x). *)
+(* Goal True. let t := constr:(F 0) in let ty := type of t in idtac ty. Abort. *)
+
+(* Axiom F : run (1 + 1) (fun x => forall y, y = x). *)
+(* Goal True. let t := constr:(F 0) in match type of t with 0 = 2 => idtac end. Abort. *)
+
+(* Axiom G : let x := 1 + 1 in forall y, y = x. *)
+(* Goal True. let t := constr:(G 0) in match type of t with 0 = 1 + 1 => idtac end. Abort. *)
+
+(* Axiom H : (fun x => forall y, y = x) (1 + 1). *)
+(* Goal True. let t := constr:(H 0) in match type of t with 0 = 1 + 1 => idtac end. Abort. *)

@@ -46,8 +46,6 @@ Require Import Ltac2.Printf.
 Require Import Ltac2.Bool.
 Require Import Force.Force.
 
-Notation delay x := (unblock (block x)).
-
 (** ** Definition of the AST *)
 
 Inductive Expr_UnaryOp :=
@@ -84,52 +82,52 @@ Inductive Expr_R : Set :=
 
 (** For ℕ this is trivial, since it anyway computes *)
 
-Definition interpret_N (e : Expr_N) : nat :=
+Definition interpret_N (e : Expr_N) : Blocked nat :=
   match e with
-  | EN_lit n => delay n
-  | EN_gen n => unblock n
+  | EN_lit n => block n
+  | EN_gen n => n
   end.
 
 (** ** Interpretation and simplification functions for ℝ *)
 
 (** Return the ℝ function corresponding to an unary operator *)
 
-Definition unary_fun_R (f : Expr_UnaryOp) : R->R :=
+Definition unary_fun_R (f : Expr_UnaryOp) : Blocked (R->R) :=
   match f with
-  | EU_Opp => delay Ropp
-  | EU_Inv => delay Rinv
+  | EU_Opp => block Ropp
+  | EU_Inv => block Rinv
   end.
 
 (** Return the ℝ function corresponding to a binary operator *)
 
-Definition binary_fun_R (f : Expr_BinaryOp) : R->R->R :=
+Definition binary_fun_R (f : Expr_BinaryOp) : Blocked (R->R->R) :=
   match f with
-  | EB_Add => delay Rplus
-  | EB_Sub => delay Rminus
-  | EB_Mul => delay Rmult
-  | EB_Div => delay Rdiv
-  | EB_Max => delay Rmax
-  | EB_Min => delay Rmin
+  | EB_Add => block Rplus
+  | EB_Sub => block Rminus
+  | EB_Mul => block Rmult
+  | EB_Div => block Rdiv
+  | EB_Max => block Rmax
+  | EB_Min => block Rmin
   end.
 
 (** Return the ℚ function corresponding to an unary operator *)
 
-Definition unary_fun_Q (f : Expr_UnaryOp) : Q->Q :=
+Definition unary_fun_Q (f : Expr_UnaryOp) : Blocked (Q->Q) :=
   match f with
-  | EU_Opp => Qopp
-  | EU_Inv => Qinv
+  | EU_Opp => block Qopp
+  | EU_Inv => block Qinv
   end.
 
 (** Return the ℚ function corresponding to a binary operator *)
 
-Definition binary_fun_Q (f : Expr_BinaryOp) : Q->Q->Q :=
+Definition binary_fun_Q (f : Expr_BinaryOp) : Blocked (Q->Q->Q) :=
   match f with
-  | EB_Add => Qplus
-  | EB_Sub => Qminus
-  | EB_Mul => Qmult
-  | EB_Div => Qdiv
-  | EB_Max => Qminmax.Qmax
-  | EB_Min => Qminmax.Qmin
+  | EB_Add => block Qplus
+  | EB_Sub => block Qminus
+  | EB_Mul => block Qmult
+  | EB_Div => block Qdiv
+  | EB_Max => block Qminmax.Qmax
+  | EB_Min => block Qminmax.Qmin
   end.
 
 (** Check if the argument of an unary operator is valid (that is not inversion of 0) *)
@@ -150,14 +148,14 @@ Definition binary_check_args_Q (f : Expr_BinaryOp) (a b : Q) : bool :=
 
 (** Interpret an AST, that is convert it back to a ℝ term - this function and the reification tactic must be inverse *)
 
-Fixpoint interpret_R (e : Expr_R) : R :=
+Fixpoint interpret_R (e : Expr_R) : Blocked R :=
   match e with
-  | ER_Q q => delay Q2R q
-  | ER_R r => (unblock r)
-  | ER_Z z => delay IZR z
-  | ER_Unary f a => (unary_fun_R f) (interpret_R a)
-  | ER_Binary f a b => (binary_fun_R f) (interpret_R a) (interpret_R b)
-  | ER_Pow a b => delay pow (interpret_R a) (interpret_N b)
+  | ER_Q q => block (Q2R q)
+  | ER_R r => r
+  | ER_Z z => block (IZR z)
+  | ER_Unary f a => block ((unblock (unary_fun_R f)) (unblock (interpret_R a)))
+  | ER_Binary f a b => block ((unblock (binary_fun_R f)) (unblock (interpret_R a)) (unblock (interpret_R b)))
+  | ER_Pow a b => block (pow (unblock (interpret_R a)) (unblock (interpret_N b)))
   end.
 
 (** Simplify an AST by computation using ℚ arithmetic *)
@@ -172,7 +170,7 @@ Fixpoint simplify_R (e : Expr_R) : Expr_R :=
     match a' with
     | ER_Q aq =>
       if unary_check_args_Q f aq
-      then ER_Q ((unary_fun_Q f) aq)
+      then ER_Q (unblock (unary_fun_Q f) aq)
       else ER_Unary f a'
     | _ => ER_Unary f a'
     end
@@ -182,7 +180,7 @@ Fixpoint simplify_R (e : Expr_R) : Expr_R :=
     match a', b' with
     | ER_Q aq, ER_Q bq =>
       if binary_check_args_Q f aq bq
-      then ER_Q ((binary_fun_Q f) aq bq)
+      then ER_Q (unblock (binary_fun_Q f) aq bq)
       else ER_Binary f a' b'
     | _, _ => ER_Binary f a' b'
     end
@@ -282,17 +280,21 @@ Qed.
 (** The interpretation of a term before and after cleanup_R is equal in ℝ *)
 
 Lemma cleanup_R_correct: forall (e : Expr_R),
-  interpret_R e = interpret_R (cleanup_R e).
+  unblock (interpret_R e) = unblock (interpret_R (cleanup_R e)).
 Proof.
   intros e; induction e as [q|r|z|f a IHa|f a IHa b IHb|a IHa b].
-  - (* Q *) cbn.
+  - (* Q *)
     destruct q as [n d]; destruct d; try (lazy; reflexivity).
-    unfold Q2R; cbn; lazy; ltac1:(lra).
-  - (* R *) reflexivity.
-  - (* Z *) reflexivity.
-  - (* unary *) cbn. rewrite IHa. reflexivity.
-  - (* binary *) cbn; rewrite IHa, IHb; reflexivity.
-  - (* pow *) cbn; rewrite IHa; reflexivity.
+    unfold Q2R; lazy; ltac1:(lra).
+  - (* R *)
+    reflexivity.
+  - (* Z *)
+    reflexivity.
+  - (* unary *)
+    simpl. rewrite IHa. reflexivity. (* FIXME should use lazy *)
+  - (* binary *)
+    simpl. rewrite IHa, IHb. reflexivity. (* FIXME should use lazy *)
+  - (* pow *) simpl; rewrite IHa; reflexivity. (* FIXME should use lazy *)
 Qed.
 
 (** The interpretation of a term before and after simplification is equal in ℝ *)
@@ -303,7 +305,7 @@ Proof.
   intros e; induction e as [q|r|z|f a IHa|f a IHa b IHb|a IHa b].
   - (* Q *) reflexivity.
   - (* R *) reflexivity.
-  - (* Z *) cbn; lazy [block unblock]; unfold Q2R; cbn; ltac1:(lra).
+  - (* Z *) lazy; unfold Q2R; f_equal; cbn; ltac1:(lra).
   - (* unary *) cbn.
     destruct (simplify_R a); rewrite IHa; try reflexivity.
     cbn.
@@ -331,23 +333,22 @@ Proof.
         ltac1:(lia).
     + rewrite Q2R_max; reflexivity.
     + rewrite Q2R_min; reflexivity.
-  - (* Pow *) cbn; lazy [block unblock].
+  - (* Pow *) cbn.
     destruct (simplify_R a); rewrite IHa; try reflexivity.
     destruct b; cbn; lazy [block unblock]; try reflexivity.
+    f_equal.
     apply Q2R_pow.
 Qed.
 
 (** The interpretation of a term before and after simplification and cleanup_R is equal in ℝ *)
 
 Lemma cleanup_simplify_R_correct: forall (e : Expr_R),
-  run (
-      interpret_R e = interpret_R (cleanup_R (simplify_R e))
-    ) (fun x => x).
+  run (block (unblock (interpret_R e) = unblock (interpret_R (cleanup_R (simplify_R e))))) (fun x => x).
 Proof.
   intros e.
   rewrite <- cleanup_R_correct.
-  hnf.
-  apply simplify_R_correct.
+  rewrite <- simplify_R_correct.
+  reflexivity.
 Qed.
 
 (** ** Reification and main tactic *)
@@ -439,54 +440,10 @@ Ltac2 rec reify_Expr_R (e : constr) : constr :=
 
 (** *** Main tactic "real_simplify" *)
 
-
-Ltac2 redflags_all_but_unblock () :=
-  {
-    (* beta: expand the application of an unfolded functions by substitution *)
-    Std.rBeta := true;
-    (* delta: true = expand all but rConst; false = expand only rConst *)
-    Std.rDelta := true;
-    (* Note: iota in tactics like cbv is a shorthand for match, fix and cofix *)
-    (* iota-match: simplify_R matches by choosing a pattern *)
-    Std.rMatch := true;
-    (* iota-fix: simplify_R fixpoint expressions by expanding one level *)
-    Std.rFix := true;
-    (* iota-cofix: simplify_R cofixpoint expressions by expanding one level *)
-    Std.rCofix := true;
-    (* zeta: expand let expressions by substitution *)
-    Std.rZeta := true;
-    (* Symbols to expand *)
-    Std.rConst := [reference:(unblock)]
-  }.
-
-Ltac2 redflags_only_unblock () :=
-  {
-    Std.rBeta := false;
-    Std.rDelta := false;
-    Std.rMatch := false;
-    Std.rFix := false;
-    Std.rCofix := false;
-    Std.rZeta := false;
-    (* Symbols to expand *)
-    Std.rConst := [reference:(unblock); reference:(block)]
-  }.
-
-Ltac2 real_simplify (term : constr) (rhs : constr) : unit :=
-  (dbg1 printf "real_simplify: term = %t" term);
-  let ast := reify_Expr_R term in
-  (dbg1 printf "real_simplify: AST = %t" ast);
-  let subgoal := Std.eval_lazy (redflags_all_but_unblock ()) '(interpret_R (cleanup_R (simplify_R $ast))) in
-  let subgoal := Std.eval_lazy (redflags_only_unblock ()) subgoal in
-  let subgoal := open_constr:(_ : $subgoal = $rhs) in
-  let subgoal := Std.eval_hnf subgoal in
-  let eq := '(cleanup_simplify_R_correct $ast) in
-  (* let eq_ty := Std.eval_lazy (redflags_all_but_unblock ()) (Constr.type eq) in *)
-  (* let eq_ty := Std.eval_lazy (redflags_only_unblock ()) eq_ty in *)
-  (* TODO: unification doesn't understand [run] *)
-  let prf :=
-    Constr.Unsafe.make (Constr.Unsafe.App '(eq_ind_r (x:=$rhs) (fun x => x = $rhs)) (Array.of_list [subgoal; term; eq]))
-  in
-  Std.exact_no_check prf.
+Ltac2 real_simplify (term : constr) : unit :=
+  let reified := reify_Expr_R term in
+  let p := '(cleanup_simplify_R_correct $reified) in
+  rewrite $p.
 
 (** An Ltac1 wrapper for the tactic *)
 
@@ -499,8 +456,7 @@ Variable x : R.
 Open Scope R.
 
 Goal (x+(Rmax ((3*4+5^2-6)/7) (1/2)) = x + 31/7).
-  lazy_match! goal with [ |- (?a = ?b) ] => real_simplify a b end.
-  Unshelve.
+  lazy_match! goal with [ |- (?t = _) ] => real_simplify t end.
   reflexivity.
 Qed.
 
