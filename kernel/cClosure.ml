@@ -1889,12 +1889,12 @@ and klt info tab (e : usubs) t =
   end
 | Lambda (na, u, c) ->
   let u' = klt info tab e u in
-  let c' = klt (push_relevance info na) tab (usubs_lift e) c in
+  let c' = klt (push_relevance (info_shift info 1) na) tab (usubs_lift e) c in
   if u' == u && c' == c then t
   else mkLambda (na, u', c')
 | Prod (na, u, v) ->
   let u' = klt info tab e u in
-  let v' = klt (push_relevance info na) tab (usubs_lift e) v in
+  let v' = klt (push_relevance (info_shift info 1) na) tab (usubs_lift e) v in
   if u' == u && v' == v then t
   else mkProd (na, u', v')
 | Cast (t, _, _) -> klt info tab e t
