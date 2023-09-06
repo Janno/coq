@@ -1801,12 +1801,12 @@ and norm_head info tab m =
           mkProd(na, kl info tab dom, rng)
       | FCoFix((n,(na,tys,bds)),e) ->
           let infobd = push_relevances (info_shift info (Array.length na)) na in
-          let ftys = Array.mapi (fun i ty -> klt (info_shift info i) tab e ty) tys in
+          let ftys = Array.map (fun ty -> klt info tab e ty) tys in
           let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) bd) bds in
           mkCoFix (n, (na, ftys, fbds))
       | FFix((n,(na,tys,bds)),e) ->
           let infobd = push_relevances (info_shift info (Array.length na)) na in
-          let ftys = Array.mapi (fun i ty -> klt (info_shift info i) tab e ty) tys in
+          let ftys = Array.map (fun ty -> klt info tab e ty) tys in
           let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) bd) bds in
           mkFix (n, (na, ftys, fbds))
       | FEvar(ev, args, env, repack) ->
