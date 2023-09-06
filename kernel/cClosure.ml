@@ -310,7 +310,9 @@ type clos_infos = {
   i_flags : reds;
   i_full : bool;
   i_relevances : Sorts.relevance Range.t;
-  i_cache : infos_cache }
+  i_cache : infos_cache;
+  i_lift : int;
+}
 
 type clos_tab = (fconstr, Empty.t) constant_def KeyTable.t
 
@@ -329,6 +331,11 @@ let push_relevances infos nas =
 let set_info_relevances info r = { info with i_relevances = r }
 
 let info_relevances info = info.i_relevances
+
+let info_shift (i : clos_infos) (k : int) : clos_infos =
+  { i with i_lift = i.i_lift + k }
+
+let info_lift (i : clos_infos) : int = i.i_lift
 
 (**********************************************************************)
 (* The type of (machine) stacks (= lambda-bar-calculus' contexts)     *)
@@ -597,7 +604,7 @@ let ref_value_cache info flags tab ref =
           match ref with
           | RelKey n ->
             let open! Context.Rel.Declaration in
-            let i = n - 1 in
+            let i = n - 1 - (info_lift info) in
             let d =
               try Range.get env.env_rel_context.env_rel_map i
               with Invalid_argument _ -> raise Not_found
@@ -1778,6 +1785,7 @@ and norm_head info tab m =
     match m.term with
       | FLambda(_n,tys,f,e) ->
         let fold (e, info, ctxt) (na, ty) =
+          let info = info_shift info 1 in
           let ty = klt info tab e ty in
           let info = push_relevance info na in
           (usubs_lift e, info, (na, ty) :: ctxt)
@@ -1786,19 +1794,19 @@ and norm_head info tab m =
         let bd = klt info tab e' f in
         List.fold_left (fun b (na,ty) -> mkLambda(na,ty,b)) bd rvtys
       | FLetIn(na,a,b,f,e) ->
-          let c = klt (push_relevance info na) tab (usubs_lift e) f in
+          let c = klt (push_relevance (info_shift info 1) na) tab (usubs_lift e) f in
           mkLetIn(na, kl info tab a, kl info tab b, c)
       | FProd(na,dom,rng,e) ->
-        let rng = klt (push_relevance info na) tab (usubs_lift e) rng in
+          let rng = klt (push_relevance (info_shift info 1) na) tab (usubs_lift e) rng in
           mkProd(na, kl info tab dom, rng)
       | FCoFix((n,(na,tys,bds)),e) ->
-          let infobd = push_relevances info na in
-          let ftys = Array.map (fun ty -> klt info tab e ty) tys in
+          let infobd = push_relevances (info_shift info (Array.length na)) na in
+          let ftys = Array.mapi (fun i ty -> klt (info_shift info i) tab e ty) tys in
           let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) bd) bds in
           mkCoFix (n, (na, ftys, fbds))
       | FFix((n,(na,tys,bds)),e) ->
-          let infobd = push_relevances info na in
-          let ftys = Array.map (fun ty -> klt info tab e ty) tys in
+          let infobd = push_relevances (info_shift info (Array.length na)) na in
+          let ftys = Array.mapi (fun i ty -> klt (info_shift info i) tab e ty) tys in
           let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) bd) bds in
           mkFix (n, (na, ftys, fbds))
       | FEvar(ev, args, env, repack) ->
@@ -1887,7 +1895,7 @@ let create_conv_infos ?univs ?(evars=default_evar_handler) flgs env =
     i_univs = univs;
     i_mode = Conversion;
   } in
-  { i_flags = flgs; i_full = false; i_relevances = Range.empty; i_cache = cache }
+  { i_flags = flgs; i_full = false; i_relevances = Range.empty; i_cache = cache; i_lift = 0 }
 
 let create_clos_infos ?univs ?(evars=default_evar_handler) flgs env =
   let univs = Option.default (universes env) univs in
@@ -1899,7 +1907,7 @@ let create_clos_infos ?univs ?(evars=default_evar_handler) flgs env =
     i_univs = univs;
     i_mode = Reduction;
   } in
-  { i_flags = flgs; i_full = false; i_relevances = Range.empty; i_cache = cache }
+  { i_flags = flgs; i_full = false; i_relevances = Range.empty; i_cache = cache; i_lift = 0 }
 
 let create_tab () = KeyTable.create 17
 
