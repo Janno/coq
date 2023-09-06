@@ -386,12 +386,35 @@ let () = define_red2 "eval_cbn" red_flags constr begin fun flags c ->
 end
 
 let () = define_red2 "eval_lazy" red_flags constr begin fun flags c ->
-  Tac2tactics.eval_lazy true flags c
-end
+    Tac2tactics.eval_lazy true flags c
+  end
 
 let () = define_red2 "eval_lazy_whnf" red_flags constr begin fun flags c ->
-  Tac2tactics.eval_lazy false flags c
-end
+    Tac2tactics.eval_lazy false flags c
+  end
+
+let () = define_red3 "eval_lazy_rels" (list (pair ident (pair constr constr))) red_flags constr begin fun rels flags c ->
+    let get_evaluable_reference = function
+      | GlobRef.VarRef id -> Proofview.tclUNIT (Tacred.EvalVarRef id)
+      | GlobRef.ConstRef cst -> Proofview.tclUNIT (Tacred.EvalConstRef cst)
+      | r -> Proofview.tclZERO (Tacred.NotEvaluableRef r)
+    in
+    Proofview.Monad.List.map get_evaluable_reference flags.rConst >>= fun rConst ->
+    let flags = { flags with rConst } in
+    let red = Lazy (true, flags) in
+    Tac2core.pf_apply begin fun env sigma ->
+      let (redfun, _) = Redexpr.reduction_of_red_expr env red in
+      let env = List.fold_right (fun (id, (bod, ty)) env ->
+        let n = Context.make_annot (Name.mk_name id) Irrelevant in
+        Environ.push_rel (Context.Rel.Declaration.LocalDef (n, EConstr.to_constr sigma bod, EConstr.to_constr sigma ty)) env
+      ) rels env
+      in
+      let (sigma, ans) = redfun env sigma c in
+      Proofview.Unsafe.tclEVARS sigma >>= fun () ->
+      Proofview.tclUNIT ans
+    end
+  end
+
 
 let () = define_red2 "eval_unfold" (list reference_with_occs) constr begin fun refs c ->
   Tac2tactics.eval_unfold refs c

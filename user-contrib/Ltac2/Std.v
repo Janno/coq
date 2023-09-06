@@ -172,6 +172,7 @@ Ltac2 @ external eval_simpl : red_flags -> (pattern * occurrences) option -> con
 Ltac2 @ external eval_cbv : red_flags -> constr -> constr := "coq-core.plugins.ltac2" "eval_cbv".
 Ltac2 @ external eval_cbn : red_flags -> constr -> constr := "coq-core.plugins.ltac2" "eval_cbn".
 Ltac2 @ external eval_lazy : red_flags -> constr -> constr := "coq-core.plugins.ltac2" "eval_lazy".
+Ltac2 @ external eval_lazy_rels : (ident * (constr * constr)) list -> red_flags -> constr -> constr := "coq-core.plugins.ltac2" "eval_lazy_rels".
 Ltac2 @ external eval_lazy_whnf : red_flags -> constr -> constr := "coq-core.plugins.ltac2" "eval_lazy_whnf".
 Ltac2 @ external eval_unfold : (reference * occurrences) list -> constr -> constr := "coq-core.plugins.ltac2" "eval_unfold".
 Ltac2 @ external eval_fold : constr list -> constr -> constr := "coq-core.plugins.ltac2" "eval_fold".
