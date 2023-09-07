@@ -475,17 +475,17 @@ let lift_fconstr_vect k v =
 let clos_rel ((e, _) : usubs) i =
   match Esubst.expand_rel i e with
     | Inl(n,(None,mt)) ->
-      Printf.printf "clos_rel: Inl(%i, (None, %s))\n%!" n (to_string mt);
+      if debug then Printf.printf "clos_rel: Inl(%i, (None, %s))\n%!" n (to_string mt);
       lift_fconstr n mt
     | Inl(n,(Some f,mt)) ->
       let res = f mt in
-      Printf.printf "clos_rel: Inl(%i, (Some(_), %s)) -> %s\n%!" n (to_string mt) (to_string res);
+      if debug then Printf.printf "clos_rel: Inl(%i, (Some(_), %s)) -> %s\n%!" n (to_string mt) (to_string res);
       lift_fconstr n res
     | Inr(k,None) ->
-      Printf.printf "clos_rel: Inr(%i, None)\n%!" k;
+      if debug then Printf.printf "clos_rel: Inr(%i, None)\n%!" k;
       {mark=Ntrl; term= FRel k}
     | Inr(k,Some p) ->
-      Printf.printf "clos_rel: Inr(%i, Some(%i))\n%!" k p;
+      if debug then Printf.printf "clos_rel: Inr(%i, Some(%i))\n%!" k p;
         lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
 
 (* since the head may be reducible, we might introduce lifts of 0 *)
@@ -1023,7 +1023,7 @@ let get_branch oenvred infos depth ci u pms (ind, c) br (e : usubs)  args =
       try_drop_parameters depth ci.ci_npar args
     with Not_found ->
     (* we know that n < stack_args_size(argstk) (if well-typed term) *)
-      Printf.printf "fterm: %s\nstack: %s\n%!"
+      if debug then Printf.printf "fterm: %s\nstack: %s\n%!"
         (to_string (mk_red (FConstruct ((ind, c), u))))
         (stack_to_string args);
       anomaly (Pp.str "ill-typed term: found a match on a partially applied constructor.")
