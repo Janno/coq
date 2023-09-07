@@ -1981,6 +1981,7 @@ and zip_term info tab m stk =
 | ZcaseT(ci, u, pms, p, br, e) :: s ->
     let zip_ctx (nas, c) =
       let e = usubs_liftn (Array.length nas) e in
+      let info = info_shift info (Array.length nas) in
       (nas, klt info tab e c)
     in
     let u = usubst_instance e u in
