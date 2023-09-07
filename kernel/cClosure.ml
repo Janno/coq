@@ -387,7 +387,18 @@ let [@ocaml.warning "-32"] rec to_string (c : fconstr) : string =
       (String.concat "; " (Array.to_list (Array.map (fun (_, c) -> constr_to_string c) bs)))
       (usubs_to_string u)
   | FCaseInvert (_, _, _, _, _, _, _, _) -> Printf.sprintf "FCaseInvert (_, _, _, _, _, _, _, _)"
-  | FLambda (_, _, b, u) -> Printf.sprintf "FLambda (_, _, %s, %s)" (constr_to_string b) (usubs_to_string u)
+  | FLambda (_, nas, b, u) -> Printf.sprintf "FLambda (_, %s, %s, %s)"
+                                (String.concat " "
+                                   (List.map (fun (b,t) ->
+                                        Printf.sprintf "(%s : %s)"
+                                          (Pp.string_of_ppcmds (Names.Name.print (Context.binder_name b)))
+                                          (constr_to_string t)
+                                   )
+                                    nas
+                                   )
+                                )
+                                (constr_to_string b)
+                                (usubs_to_string u)
   | FProd (_, _, b, u) -> Printf.sprintf "FProd (_, _, %s, %s)" (constr_to_string b) (usubs_to_string u)
   | FLetIn (_, a, b, c, u) -> Printf.sprintf "FLetIn (_, %s, %s, %s, %s)" (to_string a) (to_string b) (constr_to_string c) (usubs_to_string u)
   | FEvar (_, _, _, _) -> Printf.sprintf "FEvar (_, _, _, _)"
