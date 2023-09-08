@@ -490,13 +490,17 @@ let lift_fconstr k f =
 let lift_fconstr_vect k v =
   if Int.equal k 0 then v else Array.Fun1.map lft_fconstr k v
 
-let clos_rel ((e, _) : usubs) i =
+let clos_rel ?info ((e, _) : usubs) i =
   match Esubst.expand_rel i e with
     | Inl(n,(None,mt)) ->
       if debug then Printf.printf "clos_rel: Inl(%i, (None, %s))\n%!" n (to_string mt);
       lift_fconstr n mt
     | Inl(n,(Some f,mt)) ->
-      let res = f mt in
+      let res = begin match Option.bind info (fun info -> info.i_full) with
+        | Some true -> mt           (* we will evaluate [mt] sooner or later, no need to force now *)
+        | _ -> (f mt)               (* we might not end up evaluating [mt], force now! *)
+        end
+      in
       if debug then Printf.printf "clos_rel: Inl(%i, (Some(_), %s)) -> %s\n%!" n (to_string mt) (to_string res);
       lift_fconstr n res
     | Inr(k,None) ->
@@ -1603,7 +1607,7 @@ and knht info (e : usubs) t stk =
       else
         knh info { mark = Cstr; term = FFix (fx, e) } stk
     | Cast(a,_,_) -> knht info e a stk
-    | Rel n -> knh info (clos_rel e n) stk
+    | Rel n -> knh info (clos_rel ~info e n) stk
     | Proj (p, c) -> knh info { mark = Red; term = FProj (p, mk_clos e c) } stk
     | (Ind _|Const _|Construct _|Var _|Meta _ | Sort _ | Int _|Float _) -> (mk_clos e t, stk)
     | CoFix cfx -> { mark = Cstr; term = FCoFix (cfx,e) }, stk
@@ -1881,7 +1885,13 @@ and klt info tab (e : usubs) t =
 | Rel i ->
   begin match Esubst.expand_rel i (fst e) with
   | Inl (n, (None, mt)) -> kl info tab @@ lift_fconstr n mt
-  | Inl (n, (Some f, mt)) -> kl info tab @@ lift_fconstr n (f mt)
+  | Inl (n, (Some f, mt)) ->
+    begin match info.i_full with
+    | Some true ->              (* we will evaluate [mt] sooner or later, no need to force now *)
+      kl info tab @@ lift_fconstr n mt
+    | _ ->                      (* we might not end up evaluating [mt], force now! *)
+      kl info tab @@ lift_fconstr n (f mt)
+    end
   | Inr (k, None) -> if Int.equal k i then t else mkRel k
   | Inr (k, Some p) -> kl info tab @@ lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
   end
