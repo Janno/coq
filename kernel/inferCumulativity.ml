@@ -8,6 +8,8 @@
 (*         *     (see LICENSE file for the text of the license)         *)
 (************************************************************************)
 
+[@@@ocaml.warning "-48"]
+
 open Conversion
 open Declarations
 open Constr

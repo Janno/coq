@@ -253,8 +253,8 @@ val set_conv : (clos_infos -> clos_tab -> fconstr -> fconstr -> bool) -> unit
 val lift_fconstr      : int -> fconstr -> fconstr
 val lift_fconstr_vect : int -> fconstr array -> fconstr array
 
-val mk_clos      : usubs -> constr -> fconstr
-val mk_clos_vect : usubs -> constr array -> fconstr array
+val mk_clos      : ?info:clos_infos -> usubs -> constr -> fconstr
+val mk_clos_vect : ?info:clos_infos -> usubs -> constr array -> fconstr array
 
 val kni: clos_infos -> clos_tab -> fconstr -> stack -> fconstr * stack
 val knr: clos_infos -> clos_tab -> fconstr -> stack -> fconstr * stack

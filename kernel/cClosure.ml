@@ -572,9 +572,9 @@ let usubst_sort (_,u) s = match s with
 
 (* Optimization: do not enclose variables in a closure.
    Makes variable access much faster *)
-let mk_clos (e:usubs) t =
+let mk_clos ?info (e:usubs) t =
   match kind t with
-    | Rel i -> clos_rel e i
+    | Rel i -> clos_rel ?info e i
     | Var x -> {mark = Red; term = FFlex (VarKey x) }
     | Const c -> {mark = Red; term = FFlex (ConstKey (usubst_punivs e c)) }
     | Sort s ->
@@ -598,14 +598,14 @@ let mk_irrelevant = { mark = Cstr; term = FIrrelevant }
 
 (** Hand-unrolling of the map function to bypass the call to the generic array
     allocation *)
-let mk_clos_vect env v = match v with
+let mk_clos_vect ?info env v = match v with
 | [||] -> [||]
-| [|v0|] -> [|mk_clos env v0|]
-| [|v0; v1|] -> [|mk_clos env v0; mk_clos env v1|]
-| [|v0; v1; v2|] -> [|mk_clos env v0; mk_clos env v1; mk_clos env v2|]
+| [|v0|] -> [|mk_clos ?info env v0|]
+| [|v0; v1|] -> [|mk_clos ?info env v0; mk_clos ?info env v1|]
+| [|v0; v1; v2|] -> [|mk_clos ?info env v0; mk_clos ?info env v1; mk_clos ?info env v2|]
 | [|v0; v1; v2; v3|] ->
-  [|mk_clos env v0; mk_clos env v1; mk_clos env v2; mk_clos env v3|]
-| v -> Array.Fun1.map mk_clos env v
+  [|mk_clos ?info env v0; mk_clos ?info env v1; mk_clos ?info env v2; mk_clos ?info env v3|]
+| v -> Array.Fun1.map (mk_clos ?info) env v
 
 let is_irrelevant info r = match info.i_cache.i_mode, r with
 | Conversion, Sorts.Irrelevant -> true
@@ -1076,7 +1076,7 @@ let get_branch oenvred infos depth ci u pms (ind, c) br (e : usubs)  args =
     | Zshift _ | ZcaseT _ | Zproj _ | Zfix _ | Zupdate _ | Zprimitive _ ->
       assert false
     in
-    let ind_subst = inductive_subst mib u oenvred (Array.map (mk_clos e) pms) in
+    let ind_subst = inductive_subst mib u oenvred (Array.map (mk_clos ~info:infos e) pms) in
     let args = Array.concat (List.map map args) in
     let rec push i e = function
     | [] -> []
@@ -1088,7 +1088,7 @@ let get_branch oenvred infos depth ci u pms (ind, c) br (e : usubs)  args =
       let b = subst_instance_constr u b in
       let s = Array.rev_of_list ans in
       let e = usubs_consv oenvred s ind_subst in
-      let v = mk_clos e b in
+      let v = mk_clos ~info:infos e b in
       v :: ans
     in
     let ext = push (Array.length args - 1) [] ctx in
@@ -1589,7 +1589,7 @@ and knht info (e : usubs) t stk =
     (stack_to_string stk);
   match kind t with
     | App(a,b) ->
-        knht info e a (append_stack (mk_clos_vect e b) stk)
+        knht info e a (append_stack (mk_clos_vect ~info e b) stk)
     | Case(ci,u,pms,p,NoInvert,t,br) ->
       if is_irrelevant info ci.ci_relevance then
         (mk_irrelevant, skip_irrelevant_stack info stk)
@@ -1599,7 +1599,7 @@ and knht info (e : usubs) t stk =
       if is_irrelevant info ci.ci_relevance then
         (mk_irrelevant, skip_irrelevant_stack info stk)
       else
-        let term = FCaseInvert (ci, u, pms, p, (Array.map (mk_clos e) indices), mk_clos e t, br, e) in
+        let term = FCaseInvert (ci, u, pms, p, (Array.map (mk_clos ~info e) indices), mk_clos ~info e t, br, e) in
         { mark = Red; term }, stk
     | Fix (((_, n), (lna, _, _)) as fx) ->
       if is_irrelevant info (lna.(n)).binder_relevance then
@@ -1608,14 +1608,14 @@ and knht info (e : usubs) t stk =
         knh info { mark = Cstr; term = FFix (fx, e) } stk
     | Cast(a,_,_) -> knht info e a stk
     | Rel n -> knh info (clos_rel ~info e n) stk
-    | Proj (p, c) -> knh info { mark = Red; term = FProj (p, mk_clos e c) } stk
-    | (Ind _|Const _|Construct _|Var _|Meta _ | Sort _ | Int _|Float _) -> (mk_clos e t, stk)
+    | Proj (p, c) -> knh info { mark = Red; term = FProj (p, mk_clos ~info e c) } stk
+    | (Ind _|Const _|Construct _|Var _|Meta _ | Sort _ | Int _|Float _) -> (mk_clos ~info e t, stk)
     | CoFix cfx -> { mark = Cstr; term = FCoFix (cfx,e) }, stk
     | Lambda _ -> { mark = Cstr ; term = mk_lambda e t }, stk
     | Prod (n, t, c) ->
-      { mark = Ntrl; term = FProd (n, mk_clos e t, c, e) }, stk
+      { mark = Ntrl; term = FProd (n, mk_clos ~info e t, c, e) }, stk
     | LetIn (n,b,t,c) ->
-      { mark = Red; term = FLetIn (n, mk_clos e b, mk_clos e t, c, e) }, stk
+      { mark = Red; term = FLetIn (n, mk_clos ~info e b, mk_clos ~info e t, c, e) }, stk
     | Evar ev ->
       begin match info.i_cache.i_sigma.evar_expand ev with
       | EvarDefined c -> knht info e c stk
@@ -1628,8 +1628,8 @@ and knht info (e : usubs) t stk =
       end
     | Array(u,t,def,ty) ->
       let len = Array.length t in
-      let ty = mk_clos e ty in
-      let t = Parray.init (Uint63.of_int len) (fun i -> mk_clos e t.(i)) (mk_clos e def) in
+      let ty = mk_clos ~info e ty in
+      let t = Parray.init (Uint63.of_int len) (fun i -> mk_clos ~info e t.(i)) (mk_clos ~info e def) in
       let term = FArray (u,t,ty) in
       knh info { mark = Cstr; term } stk
 
@@ -1742,7 +1742,7 @@ let rec knr info tab m stk =
        end
      | (head, (_, _, s)) -> (head, s))
   | FCaseInvert (ci, u, pms, _p,iv,_c,v,env) when red_set info.i_flags fMATCH ->
-    let pms = mk_clos_vect env pms in
+    let pms = mk_clos_vect ~info env pms in
     let u = usubst_instance env u in
     begin match case_inversion oenvred info tab ci u pms iv v with
       | Some c -> knit info tab env c stk
@@ -1827,7 +1827,7 @@ and case_inversion oenvred info tab ci u params indices v =
     let info = {info with i_cache = { info.i_cache with i_mode = Conversion}; i_flags=all} in
     let check_index i index =
       let expected = expect_args.(ci.ci_npar + i) in
-      let expected = mk_clos (psubst,u) expected in
+      let expected = mk_clos ~info (psubst,u) expected in
       !conv info tab expected index
     in
     if Array.for_all_i check_index 0 indices
@@ -2042,7 +2042,7 @@ let eval_lazy info tab t =
   if debug then Printf.printf "eval_lazy(%i) in: %s\n%!" v (to_string t);
   let t = kl info tab t in
   if debug then Printf.printf "eval_lazy(%i) out: %s\n%!" v (Pp.string_of_ppcmds (Constr.debug_print t));
-  let res = mk_clos (Esubst.subs_id 0, Univ.Instance.empty) t in
+  let res = mk_clos ~info (Esubst.subs_id 0, Univ.Instance.empty) t in
   res
 let _ = eval_lazy_ref := eval_lazy
 
