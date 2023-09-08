@@ -629,6 +629,7 @@ let def_to_string d =
   | Undef _ -> Printf.sprintf "Undef(_)"
   | OpaqueDef _ -> Printf.sprintf "OpaqueDef(_)"
 
+let ref_value_cache info flags tabs ref =
   let tab = tab_of info tabs in
   let env = info.i_cache.i_env in
   try
@@ -1540,8 +1541,8 @@ let is_irrelevant_projection infos p = match infos.i_cache.i_mode with
    constructor, cofix, letin, constant), or a neutral term (product,
    inductive) *)
 let rec knh info m stk =
-  if debug then Printf.printf "knh fterm(full=%b): %s\nknh stack: %s\n%!"
-    (info_full info)
+  if debug then Printf.printf "knh fterm(full=%s): %s\nknh stack: %s\n%!"
+    (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (to_string m)
     (stack_to_string stk);
   match m.term with
@@ -1577,8 +1578,8 @@ let rec knh info m stk =
 
 (* The same for pure terms *)
 and knht info (e : usubs) t stk =
-  if debug then Printf.printf "knht fterm(full=%b): %s\nknht usubs: %s\nknht stack: %s\n%!"
-    (info_full info)
+  if debug then Printf.printf "knht fterm(full=%s): %s\nknht usubs: %s\nknht stack: %s\n%!"
+    (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (Pp.string_of_ppcmds (Constr.debug_print t))
     (usubs_to_string e)
     (stack_to_string stk);
@@ -1643,9 +1644,9 @@ let knit_counter = ref 0
 let rec knr info tab m stk =
   let count = !knr_counter in
   incr knr_counter;
-  if debug then Printf.printf "knr(%i) fterm(full=%b): %s\nknr stack: %s\n%!"
+  if debug then Printf.printf "knr(%i) fterm(full=%s): %s\nknr stack: %s\n%!"
     count
-    (info_full info)
+    (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (to_string m)
     (stack_to_string stk);
   let oenvred =
@@ -1765,9 +1766,9 @@ let rec knr info tab m stk =
 and kni info tab m stk =
   let count = !kni_counter in
   incr kni_counter;
-  if debug then Printf.printf "kni(%i) fterm(full=%b): %s\nkni stack: %s\n%!"
+  if debug then Printf.printf "kni(%i) fterm(full=%s): %s\nkni stack: %s\n%!"
     count
-    (info_full info)
+    (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (to_string m)
     (stack_to_string stk);
   let (hm,s) = knh info m stk in
@@ -1784,9 +1785,9 @@ and kni info tab m stk =
 and knit info tab (e : usubs) t stk =
   let count = !knit_counter in
   incr knit_counter;
-  if debug then Printf.printf "knit(%i) fterm(full=%b): %s\nknit usubs: %s\nknit stack: %s\n%!"
+  if debug then Printf.printf "knit(%i) fterm(full=%s): %s\nknit usubs: %s\nknit stack: %s\n%!"
     count
-    (info_full info)
+    (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (constr_to_string t)
     (usubs_to_string e)
     (stack_to_string stk);
@@ -1851,9 +1852,9 @@ let klt_counter = ref 0
 let rec kl info tab m =
   let count = !kl_counter in
   incr kl_counter;
-  if debug then Printf.printf "kl(%i) fterm(full=%b,val=%b): %s\n%!"
+  if debug then Printf.printf "kl(%i) fterm(full=%s,val=%b): %s\n%!"
       count
-      (info_full info)
+      (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
       (is_val m)
       (to_string m);
   let share = info.i_cache.i_share in
@@ -1871,9 +1872,9 @@ let rec kl info tab m =
 and klt info tab (e : usubs) t =
   let count = !klt_counter in
   incr klt_counter;
-  if debug then Printf.printf "klt(%i) fterm(full=%b): %s\nklt usubs: %s\n%!"
-    count
-    (info_full info)
+  if debug then Printf.printf "klt(%i) fterm(full=%s): %s\nklt usubs: %s\n%!"
+      count
+      (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (Pp.string_of_ppcmds (Constr.debug_print t))
     (usubs_to_string e);
   match kind t with
@@ -1979,8 +1980,8 @@ and norm_head info tab m =
       | FIrrelevant -> assert false (* only introduced when converting *)
 
 and zip_term info tab m stk =
-  if debug then Printf.printf "zip_term fterm(full=%b): %s\nzip_term stack: %s\n%!"
-    (info_full info)
+  if debug then Printf.printf "zip_term fterm(full=%s): %s\nzip_term stack: %s\n%!"
+      (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (Pp.string_of_ppcmds (Constr.debug_print m))
     (stack_to_string stk);
   match stk with
