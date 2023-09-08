@@ -310,13 +310,14 @@ type infos_cache = {
 
 type clos_infos = {
   i_flags : reds;
-  i_full : bool;
+  i_full : bool option;
   i_relevances : Sorts.relevance Range.t;
   i_cache : infos_cache;
   i_lift : int;
 }
 
-type clos_tab = (fconstr, Empty.t) constant_def KeyTable.t
+type clos_tab1 = (fconstr, Empty.t) constant_def KeyTable.t
+type clos_tab = clos_tab1 * clos_tab1 * clos_tab1
 
 let info_flags info = info.i_flags
 let info_env info = info.i_cache.i_env
@@ -338,6 +339,12 @@ let info_shift (i : clos_infos) (k : int) : clos_infos =
   { i with i_lift = i.i_lift + k }
 
 let info_lift (i : clos_infos) : int = i.i_lift
+
+let tab_of (i : clos_infos) (tab_def, tab_full, tab_id) =
+  match i.i_full with
+  | None -> tab_def
+  | Some true -> tab_full
+  | Some false -> tab_id
 
 (**********************************************************************)
 (* The type of (machine) stacks (= lambda-bar-calculus' contexts)     *)
@@ -622,7 +629,7 @@ let def_to_string d =
   | Undef _ -> Printf.sprintf "Undef(_)"
   | OpaqueDef _ -> Printf.sprintf "OpaqueDef(_)"
 
-let ref_value_cache info flags tab ref =
+  let tab = tab_of info tabs in
   let env = info.i_cache.i_env in
   try
     let res = KeyTable.find tab ref in
@@ -1163,14 +1170,17 @@ let unfold_projection info p =
 open Primred
 
 (* The evaluation function is not yet available. *)
-let eval_lazy_ref = ref (fun _ _ -> assert false)
+let eval_lazy_ref = ref (fun _ _ _ -> assert false)
 
 module FNativeEntries =
   struct
     type elem = fconstr
     type args = fconstr array
     type evd = unit
-    type lazy_info = clos_infos * (fconstr, Util.Empty.t) Declarations.constant_def KeyTable.t
+    type lazy_info = clos_infos *
+                     ( (fconstr, Util.Empty.t) Declarations.constant_def KeyTable.t
+                       * (fconstr, Util.Empty.t) Declarations.constant_def KeyTable.t
+                       * (fconstr, Util.Empty.t) Declarations.constant_def KeyTable.t)
     type uinstance = Univ.Instance.t
 
     let mk_construct c =
@@ -1488,11 +1498,11 @@ module FNativeEntries =
       check_array env;
       { mark = Cstr; term = FArray (u,t,ty)}
 
-    let eval_full_lazy (info, _) t =
-      !eval_lazy_ref {info with i_flags = RedFlags.full_red; i_full = true} t
+    let eval_full_lazy (info, tab) t =
+      !eval_lazy_ref {info with i_flags = RedFlags.full_red; i_full = Some true} tab t
 
-    let eval_id_lazy (info, _) t =
-      !eval_lazy_ref {info with i_flags = RedFlags.id_red; i_full = false} t
+    let eval_id_lazy (info, tab) t =
+      !eval_lazy_ref {info with i_flags = RedFlags.id_red; i_full = Some false} tab t
 
     let mkApp t args =
       { mark = Red; term = FApp(t, args) }
@@ -1639,8 +1649,8 @@ let rec knr info tab m stk =
     (to_string m)
     (stack_to_string stk);
   let oenvred =
-    if info_full info then
-      Some (fun m -> !eval_lazy_ref info m)
+    if Option.default false (info_full info) then
+      Some (fun m -> !eval_lazy_ref info tab m)
     else None
   in
   let res =
@@ -1809,7 +1819,6 @@ and case_inversion oenvred info tab ci u params indices v =
     (* indtyping enforces 1 ctor with no letins in the context *)
     let _, expect = mip.mind_nf_lc.(0) in
     let _ind, expect_args = destApp expect in
-    let tab = if info.i_cache.i_mode == Conversion then tab else KeyTable.create 17 in
     let info = {info with i_cache = { info.i_cache with i_mode = Conversion}; i_flags=all} in
     let check_index i index =
       let expected = expect_args.(ci.ci_npar + i) in
@@ -2016,10 +2025,9 @@ let norm_term info tab e t = klt info tab e t
 
 let counter = ref 0
 
-let eval_lazy info t =
+let eval_lazy info tab t =
   let v = !counter in
   counter := !counter + 1;
-  let tab = KeyTable.create 17 in
   if debug then Printf.printf "eval_lazy(%i) in: %s\n%!" v (to_string t);
   let t = kl info tab t in
   if debug then Printf.printf "eval_lazy(%i) out: %s\n%!" v (Pp.string_of_ppcmds (Constr.debug_print t));
@@ -2053,7 +2061,7 @@ let create_conv_infos ?univs ?(evars=default_evar_handler) flgs env =
     i_univs = univs;
     i_mode = Conversion;
   } in
-  { i_flags = flgs; i_full = false; i_relevances = Range.empty; i_cache = cache; i_lift = 0 }
+  { i_flags = flgs; i_full = None; i_relevances = Range.empty; i_cache = cache; i_lift = 0 }
 
 let create_clos_infos ?univs ?(evars=default_evar_handler) flgs env =
   let univs = Option.default (universes env) univs in
@@ -2066,9 +2074,9 @@ let create_clos_infos ?univs ?(evars=default_evar_handler) flgs env =
     i_univs = univs;
     i_mode = Reduction;
   } in
-  { i_flags = flgs; i_full = false; i_relevances = Range.empty; i_cache = cache; i_lift = 0 }
+  { i_flags = flgs; i_full = None; i_relevances = Range.empty; i_cache = cache; i_lift = 0 }
 
-let create_tab () = KeyTable.create 17
+let create_tab () = (KeyTable.create 17, KeyTable.create 17, KeyTable.create 17)
 
 let oracle_of_infos infos = Environ.oracle infos.i_cache.i_env
 
