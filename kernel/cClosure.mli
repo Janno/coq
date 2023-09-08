@@ -117,8 +117,9 @@ type fterm =
   | FLOCKED
   | FPrimitive of CPrimitives.t * pconstant * fconstr * fconstr array
     (* operator, constr def, primitive as an fconstr, full array of suitably evaluated arguments *)
+  | FForce of fconstr * fconstr Lazy.t
 
-and usubs = ((fconstr -> fconstr) option * fconstr) Esubst.subs Univ.puniverses
+and usubs = fconstr Esubst.subs Univ.puniverses
 
 (***********************************************************************
   s A [stack] is a context of arguments, arguments are pushed by
@@ -152,7 +153,7 @@ val inductive_subst : Declarations.mutual_inductive_body
 
 val usubs_lift : usubs -> usubs
 val usubs_liftn : int -> usubs -> usubs
-val usubs_cons : (fconstr -> fconstr) option * fconstr -> usubs -> usubs
+val usubs_cons : fconstr -> usubs -> usubs
 
 (** identity if the first instance is empty *)
 val usubst_instance : 'a Univ.puniverses -> Univ.Instance.t -> Univ.Instance.t

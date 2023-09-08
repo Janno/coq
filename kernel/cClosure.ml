@@ -283,8 +283,9 @@ and fterm =
   | FLOCKED
   | FPrimitive of CPrimitives.t * pconstant * fconstr * fconstr array
     (* operator, constr def, primitive as an fconstr, full array of suitably evaluated arguments *)
+  | FForce of fconstr * fconstr Lazy.t
 
-and usubs = ((fconstr -> fconstr) option * fconstr) Esubst.subs Univ.puniverses
+and usubs = fconstr Esubst.subs Univ.puniverses
 
 and finvert = fconstr array
 
@@ -293,6 +294,11 @@ let set_ntrl v = v.mark <- Ntrl
 
 let mk_atom c = {mark=Ntrl;term=FAtom c}
 let mk_red f = {mark=Red;term=f}
+
+let fforce (t : fconstr) (f : (fconstr -> fconstr) option) =
+  match f with
+  | None -> t
+  | Some f -> mk_red (FForce (t, lazy (f t)))
 
 (* Could issue a warning if no is still Red, pointing out that we loose
    sharing. *)
@@ -417,6 +423,10 @@ let [@ocaml.warning "-32"] rec to_string (c : fconstr) : string =
   | FIrrelevant -> Printf.sprintf "FIrrelevant"
   | FLOCKED -> Printf.sprintf "FLOCKED"
   | FPrimitive (p, _, _, args) -> Printf.sprintf "FPrimitive (%s, _, _, [|%s|])" (CPrimitives.to_string p) (String.concat ";" (Array.to_list (Array.map to_string args)))
+  | FForce (t, out) ->
+    Printf.sprintf "FForce (%s, %s)"
+      (to_string t)
+      (if Lazy.is_val out then to_string (Lazy.force out) else "<thunk>")
   )
   ^ "}"
 
@@ -426,8 +436,8 @@ and [@ocaml.warning "-32"] usubs_to_string (u : usubs) =
     let open Esubst.Internal in
     match v with
     | REL i -> Printf.sprintf "REL(%i)" i
-    | VAL (i, (o, c)) ->
-      Printf.sprintf "VAL(%i,(%s,%s))" i (if Option.has_some o then "Some _" else "None") (to_string c)
+    | VAL (i, c) ->
+      Printf.sprintf "VAL(%i,%s)" i (to_string c)
   in
   String.concat " :: " (List.map aux ls) ^ (Printf.sprintf " :: [] @ %i" i)
 
@@ -484,25 +494,18 @@ let rec lft_fconstr n ft =
     | FLIFT(k,m) -> lft_fconstr (n+k) m
     | FLOCKED -> assert false
     | FFlex (RelKey _) | FAtom _ | FApp _ | FProj _ | FCaseT _ | FCaseInvert _ | FProd _
-      | FLetIn _ | FEvar _ | FCLOS _ | FArray _ | FPrimitive _ -> {mark=ft.mark; term=FLIFT(n,ft)}
+      | FLetIn _ | FEvar _ | FCLOS _ | FArray _ | FPrimitive _ | FForce _ -> {mark=ft.mark; term=FLIFT(n,ft)}
 let lift_fconstr k f =
   if Int.equal k 0 then f else lft_fconstr k f
 let lift_fconstr_vect k v =
   if Int.equal k 0 then v else Array.Fun1.map lft_fconstr k v
 
 let clos_rel ?info ((e, _) : usubs) i =
+  ignore info;                  (* TODO: account for info_lift here instead of in ref_value_cache *)
   match Esubst.expand_rel i e with
-    | Inl(n,(None,mt)) ->
+    | Inl(n,mt) ->
       if debug then Printf.printf "clos_rel: Inl(%i, (None, %s))\n%!" n (to_string mt);
       lift_fconstr n mt
-    | Inl(n,(Some f,mt)) ->
-      let res = begin match Option.bind info (fun info -> info.i_full) with
-        | Some true -> mt           (* we will evaluate [mt] sooner or later, no need to force now *)
-        | _ -> (f mt)               (* we might not end up evaluating [mt], force now! *)
-        end
-      in
-      if debug then Printf.printf "clos_rel: Inl(%i, (Some(_), %s)) -> %s\n%!" n (to_string mt) (to_string res);
-      lift_fconstr n res
     | Inr(k,None) ->
       if debug then Printf.printf "clos_rel: Inr(%i, None)\n%!" k;
       {mark=Ntrl; term= FRel k}
@@ -795,6 +798,8 @@ let rec to_constr (lfts, usubst as ulfts) v =
     | FIrrelevant -> assert (!Flags.in_debugger); mkVar(Id.of_string"_IRRELEVANT_")
     | FLOCKED -> assert (!Flags.in_debugger); mkVar(Id.of_string"_LOCKED_")
 
+    | FForce _ -> assert false
+
 and to_constr_case (lfts,_ as ulfts) ci u pms p iv c ve env =
   let subs = comp_subs ulfts env in
   if Esubst.is_subs_id (fst env) && Esubst.is_lift_id lfts then
@@ -811,7 +816,7 @@ and to_constr_case (lfts,_ as ulfts) ci u pms p iv c ve env =
             Array.map f_ctx ve)
 
 and comp_subs (el,u) (s,u') =
-  Esubst.lift_subst (fun el (f, c) -> lazy (to_constr (el,u) (match f with None -> c | Some f -> f c))) el s, u'
+  Esubst.lift_subst (fun el c -> lazy (to_constr (el,u) c)) el s, u'
 
 (* This function defines the correspondence between constr and
    fconstr. When we find a closure whose substitution is the identity,
@@ -913,7 +918,7 @@ let usubs_cons x (s,u) = Esubst.subs_cons x s, u
 
 let rec subs_consn oenvred v i n s =
   if Int.equal i n then s
-  else subs_consn oenvred v (i + 1) n (Esubst.subs_cons (oenvred, v.(i)) s)
+  else subs_consn oenvred v (i + 1) n (Esubst.subs_cons (fforce v.(i) oenvred) s)
 
 let usubs_consn oenvred v i n s = on_fst (subs_consn oenvred v i n) s
 
@@ -1028,13 +1033,13 @@ let drop_parameters depth n argstk =
 
 let inductive_subst mib u oenvred pms =
   let rec mk_pms i ctx = match ctx with
-    | [] -> Esubst.subs_id 0
-    | RelDecl.LocalAssum _ :: ctx ->
-      let subs = mk_pms (i - 1) ctx in
-      Esubst.subs_cons (oenvred, pms.(i)) subs
-    | RelDecl.LocalDef (_, c, _) :: ctx ->
-      let subs = mk_pms i ctx in
-      Esubst.subs_cons (oenvred, mk_clos (subs,u) c) subs
+  | [] -> Esubst.subs_id 0
+  | RelDecl.LocalAssum _ :: ctx ->
+    let subs = mk_pms (i - 1) ctx in
+    Esubst.subs_cons (fforce pms.(i) oenvred) subs
+  | RelDecl.LocalDef (_, c, _) :: ctx ->
+    let subs = mk_pms i ctx in
+    Esubst.subs_cons (fforce (mk_clos (subs,u) c) oenvred) subs
   in
   mk_pms (Array.length pms - 1) mib.mind_params_ctxt, u
 
@@ -1159,7 +1164,7 @@ let contract_fix_vect oenvred fix =
   in
   let rec mk_subs env i =
     if Int.equal i nfix then env
-    else mk_subs (Esubst.subs_cons (oenvred, make_body i) env) (i + 1) (* FIXME *)
+    else mk_subs (Esubst.subs_cons (fforce (make_body i) oenvred) env) (i + 1) (* FIXME *)
   in
   (on_fst (fun env -> mk_subs env 0) env, thisbody)
 
@@ -1573,6 +1578,8 @@ let rec knh info m stk =
       (match unfold_projection info p with
        | None -> (m, stk)
        | Some s -> knh info c (s :: zupdate info m stk))
+    | FForce (m,lazy out) ->
+      update m out.mark out.term; knh info m stk
 
 (* cases where knh stops *)
     | (FFlex _|FLetIn _|FConstruct _|FEvar _|FCaseInvert _|FIrrelevant|
@@ -1717,7 +1724,7 @@ let rec knr info tab m stk =
         | (_,args, ((Zapp _ | Zfix _ | Zshift _ | Zupdate _ | Zprimitive _) :: _ | [] as s)) -> (m,args@s))
     else (m, stk)
   | FLetIn (_,v,_,bd,e) when red_set info.i_flags fZETA ->
-      knit info tab (on_fst (Esubst.subs_cons (oenvred, v)) e) bd stk
+      knit info tab (on_fst (Esubst.subs_cons (fforce v oenvred)) e) bd stk
   | FPrimitive (op, ((_,u) as pc), fc, args) when m.mark <> Cstr ->
     (match FredNative.red_prim (info_env info) () (info, tab) op u args with
      | FredNative.Result m -> kni info tab m stk
@@ -1756,7 +1763,7 @@ let rec knr info tab m stk =
   | FLambda _ | FFlex _ | FRel _ (* irrelevance handled by conversion *)
   | FLetIn _ (* only happens in reduction mode *) ->
     (m, stk)
-  | FLOCKED | FCLOS _ | FApp _ | FCaseT _ | FLIFT _ ->
+  | FLOCKED | FCLOS _ | FApp _ | FCaseT _ | FLIFT _ | FForce _ ->
     (* ruled out by knh(t) *)
     assert false
   in
@@ -1847,7 +1854,7 @@ let is_val v = match v.term with
 | FFlex _ -> v.mark == Ntrl
 | FPrimitive _ -> v.mark == Cstr
 | FApp _ | FProj _ | FFix _ | FCoFix _ | FCaseT _ | FCaseInvert _ | FLambda _
-| FProd _ | FLetIn _ | FEvar _ | FArray _ | FLIFT _ | FCLOS _ -> false
+| FProd _ | FLetIn _ | FEvar _ | FArray _ | FLIFT _ | FCLOS _ | FForce _ -> false
 | FIrrelevant | FLOCKED -> assert false
 
 let kl_counter = ref 0
@@ -1884,14 +1891,7 @@ and klt info tab (e : usubs) t =
   match kind t with
 | Rel i ->
   begin match Esubst.expand_rel i (fst e) with
-  | Inl (n, (None, mt)) -> kl info tab @@ lift_fconstr n mt
-  | Inl (n, (Some f, mt)) ->
-    begin match info.i_full with
-    | Some true ->              (* we will evaluate [mt] sooner or later, no need to force now *)
-      kl info tab @@ lift_fconstr n mt
-    | _ ->                      (* we might not end up evaluating [mt], force now! *)
-      kl info tab @@ lift_fconstr n (f mt)
-    end
+  | Inl (n, mt) -> kl info tab @@ lift_fconstr n mt
   | Inr (k, None) -> if Int.equal k i then t else mkRel k
   | Inr (k, Some p) -> kl info tab @@ lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
   end
@@ -1987,6 +1987,7 @@ and norm_head info tab m =
       | FApp _ | FCaseT _ | FCaseInvert _ | FLIFT _ | FCLOS _ | FInt _
       | FFloat _ -> term_of_fconstr m
       | FPrimitive _ -> assert false (* Not a value, should have reduced *)
+      | FForce _ -> assert false    (* Not a value, should have reduced *)
       | FIrrelevant -> assert false (* only introduced when converting *)
 
 and zip_term info tab m stk =

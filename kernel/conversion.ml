@@ -287,7 +287,7 @@ let esubst_of_rel_context_instance_list ctx u args e =
   | LocalDef (_, c, _) :: ctx ->
     let c = Vars.subst_instance_constr u c in
     let c = mk_clos args c in
-    aux lft (usubs_cons (None, c) e) (usubs_cons (None, c) args) ctx
+    aux lft (usubs_cons c e) (usubs_cons c args) ctx
   in
   aux 0 e args (List.rev ctx)
 
@@ -745,7 +745,7 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
      (* Should not happen because both (hd1,v1) and (hd2,v2) are in whnf *)
      | ( (FLetIn _, _) | (FCaseT _,_) | (FApp _,_) | (FCLOS _,_) | (FLIFT _,_)
        | (_, FLetIn _) | (_,FCaseT _) | (_,FApp _) | (_,FCLOS _) | (_,FLIFT _)
-       | (FLOCKED,_) | (_,FLOCKED)) -> assert false
+       | (FLOCKED,_) | (_,FLOCKED) | (FForce _,_) | (_,FForce _)) -> assert false
 
      | (FRel _ | FAtom _ | FInd _ | FFix _ | FCoFix _ | FCaseInvert _
        | FProd _ | FEvar _ | FInt _ | FFloat _ | FArray _ | FIrrelevant

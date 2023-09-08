@@ -251,6 +251,7 @@ let rec infer_fterm cv_pb infos variances hd stk =
     Array.fold_right infer br variances
 
   | FPrimitive _ -> assert false (* TODO *)
+  | FForce _ -> assert false (* TODO *)
 
   (* Removed by whnf *)
   | FLOCKED | FCaseT _ | FLetIn _ | FApp _ | FLIFT _ | FCLOS _ -> assert false
