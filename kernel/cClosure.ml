@@ -2095,6 +2095,9 @@ and make_forced_fterm (f : fterm) =
   | FCLOS (t, e, oi) ->
     let oi = Some (Option.default 0 oi) in
     FCLOS (t, e, oi)
+  | FFlex (fl, oi) ->
+    let oi = Some (Option.default 0 oi) in
+    FFlex (fl, oi)
 
   | FProj (_, _)
   | FInt _
@@ -2106,7 +2109,6 @@ and make_forced_fterm (f : fterm) =
   | FPrimitive (_, _, _, _)
   | FRel _
   | FAtom _
-  | FFlex _
   | FInd _
   | FConstruct _ -> f               (* forcing makes no difference *)
 
