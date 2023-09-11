@@ -211,9 +211,9 @@ let rec infer_fterm cv_pb infos variances hd stk =
     let (na,ty,bd) = destFLambda mk_clos hd in
     let variances = infer_fterm CONV infos variances ty [] in
     infer_fterm CONV (push_relevance infos na) variances bd []
-  | FProd (na,dom,codom,e) ->
+  | FProd (na,dom,codom,e,oi) ->
     let variances = infer_fterm CONV infos variances dom [] in
-    infer_fterm cv_pb (push_relevance infos na) variances (mk_clos (CClosure.usubs_lift e) codom) []
+    infer_fterm cv_pb (push_relevance infos na) variances (mk_clos ?oi (CClosure.usubs_lift e) codom) []
   | FInd (ind, u) ->
     let variances =
       let nargs = stack_args_size stk in
@@ -226,13 +226,13 @@ let rec infer_fterm cv_pb infos variances hd stk =
       infer_constructor_instance_eq (info_env (fst infos)) variances ctor nargs u
     in
     infer_stack infos variances stk
-  | FFix ((_,(na,tys,cl)),e) | FCoFix ((_,(na,tys,cl)),e) ->
+  | FFix ((_,(na,tys,cl)),e,oi) | FCoFix ((_,(na,tys,cl)),e,oi) ->
     let n = Array.length cl in
-    let variances = infer_vect infos variances (Array.map (mk_clos e) tys) in
+    let variances = infer_vect infos variances (Array.map (mk_clos ?oi e) tys) in
     let le = CClosure.usubs_liftn n e in
     let variances =
       let infos = push_relevances infos na in
-      infer_vect infos variances (Array.map (mk_clos le) cl)
+      infer_vect infos variances (Array.map (mk_clos ?oi le) cl)
     in
     infer_stack infos variances stk
   | FArray (u,elemsdef,ty) ->
@@ -243,15 +243,14 @@ let rec infer_fterm cv_pb infos variances hd stk =
     let variances = infer_vect infos variances elems in
     infer_stack infos variances stk
 
-  | FCaseInvert (ci, u, pms, p, _, _, br, e) ->
+  | FCaseInvert (ci, u, pms, p, _, _, br, e, oi) ->
     let mib = Environ.lookup_mind (fst ci.ci_ind) (info_env (fst infos)) in
     let (_, p, _, _, br) = Inductive.expand_case_specif mib (ci, u, pms, p, NoInvert, mkProp, br) in
-    let infer c variances = infer_fterm CONV infos variances (mk_clos e c) [] in
+    let infer c variances = infer_fterm CONV infos variances (mk_clos ?oi e c) [] in
     let variances = infer p variances in
     Array.fold_right infer br variances
 
   | FPrimitive _ -> assert false (* TODO *)
-  | FForce _ -> assert false (* TODO *)
 
   (* Removed by whnf *)
   | FLOCKED | FCaseT _ | FLetIn _ | FApp _ | FLIFT _ | FCLOS _ -> assert false
@@ -268,12 +267,12 @@ and infer_stack infos variances (stk:CClosure.stack) =
       | Zfix (fx,a) ->
         let variances = infer_fterm CONV infos variances fx [] in
         infer_stack infos variances a
-      | ZcaseT (ci,u,pms,p,br,e) ->
+      | ZcaseT (ci,u,pms,p,br,e,oi) ->
         let dummy = mkProp in
         let case = (ci, u, pms, p, NoInvert, dummy, br) in
         let (_, p, _, _, br) = Inductive.expand_case (info_env (fst infos)) case in
-        let variances = infer_fterm CONV infos variances (mk_clos e p) [] in
-        infer_vect infos variances (Array.map (mk_clos e) br)
+        let variances = infer_fterm CONV infos variances (mk_clos ?oi e p) [] in
+        infer_vect infos variances (Array.map (mk_clos ?oi e) br)
       | Zshift _ -> variances
       | Zupdate _ -> variances
       | Zprimitive (_,_,_,rargs,kargs) ->

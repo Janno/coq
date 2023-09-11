@@ -56,7 +56,7 @@ let compare_stack_shape stk1 stk2 =
     | (_, Zapp l2::s2) -> compare_rec (bal-Array.length l2) stk1 s2
     | (Zproj _p1::s1, Zproj _p2::s2) ->
         Int.equal bal 0 && compare_rec 0 s1 s2
-    | (ZcaseT(_c1,_,_,_,_,_)::s1, ZcaseT(_c2,_,_,_,_,_)::s2) ->
+    | (ZcaseT(_c1,_,_,_,_,_,_)::s1, ZcaseT(_c2,_,_,_,_,_,_)::s2) ->
         Int.equal bal 0 (* && c1.ci_ind  = c2.ci_ind *) && compare_rec 0 s1 s2
     | (Zfix(_,a1)::s1, Zfix(_,a2)::s2) ->
         Int.equal bal 0 && compare_rec 0 a1 a2 && compare_rec 0 s1 s2
@@ -74,7 +74,7 @@ type lft_constr_stack_elt =
     Zlapp of (lift * fconstr) array
   | Zlproj of Projection.Repr.t * lift
   | Zlfix of (lift * fconstr) * lft_constr_stack
-  | Zlcase of case_info * lift * Univ.Instance.t * constr array * case_return * case_branch array * usubs
+  | Zlcase of case_info * lift * Univ.Instance.t * constr array * case_return * case_branch array * usubs * force
   | Zlprimitive of
      CPrimitives.t * pconstant * lft_fconstr list * lft_fconstr next_native_args
 and lft_constr_stack = lft_constr_stack_elt list
@@ -109,8 +109,8 @@ let pure_stack lfts stk =
             | (Zfix(fx,a),(l,pstk)) ->
                 let (lfx,pa) = pure_rec l a in
                 (l, Zlfix((lfx,fx),pa)::pstk)
-            | (ZcaseT(ci,u,pms,p,br,e),(l,pstk)) ->
-                (l,Zlcase(ci,l,u,pms,p,br,e)::pstk)
+            | (ZcaseT(ci,u,pms,p,br,e,oi),(l,pstk)) ->
+                (l,Zlcase(ci,l,u,pms,p,br,e,oi)::pstk)
             | (Zprimitive(op,c,_,rargs,kargs),(l,pstk)) ->
                 (l,Zlprimitive(op,c,List.map (fun t -> (l,t)) rargs,
                             List.map (fun (k,t) -> (k,(l,t))) kargs)::pstk))
@@ -360,7 +360,9 @@ let rec compare_under e1 c1 e2 c2 =
 let rec fast_test lft1 term1 lft2 term2 = match fterm_of term1, fterm_of term2 with
   | FLIFT (i, term1), (FLIFT _ | FCLOS _) -> fast_test (el_shft i lft1) term1 lft2 term2
   | FCLOS _, FLIFT (j, term2) -> fast_test lft1 term1 (el_shft j lft2) term2
-  | FCLOS (c1, (e1,u1)), FCLOS (c2, (e2,u2)) ->
+  | FCLOS (c1, (e1,u1),oi1), FCLOS (c2, (e2,u2),oi2) ->
+    assert (oi1 = None);
+    assert (oi2 = None);
     eq_lift lft1 lft2 &&
     compare_under (e1, u1) c1 (e2, u2) c2
   | _ -> false
@@ -398,7 +400,9 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
                then convert_stacks l2r infos lft1 lft2 v1 v2 cuniv
                else raise NotConvertible
            | _ -> raise NotConvertible)
-    | (FEvar (ev1, args1, env1, _), FEvar (ev2, args2, env2, _)) ->
+    | (FEvar (ev1, args1, env1, _, oi1), FEvar (ev2, args2, env2, _, oi2)) ->
+        assert (oi1 = None);
+        assert (oi2 = None);
         (* TODO: handle irrelevance *)
         if Evar.equal ev1 ev2 then
           let el1 = el_stack lft1 v1 in
@@ -521,7 +525,9 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
         let cuniv = ccnv CONV l2r infos el1 el2 ty1 ty2 cuniv in
         ccnv CONV l2r (push_relevance infos x1) (el_lift el1) (el_lift el2) bd1 bd2 cuniv
 
-    | (FProd (x1, c1, c2, e), FProd (_, c'1, c'2, e')) ->
+    | (FProd (x1, c1, c2, e, oi1), FProd (_, c'1, c'2, e', oi2)) ->
+        assert (oi1 = None);
+        assert (oi2 = None);
         if not (is_empty_stack v1 && is_empty_stack v2) then
           (* May happen because we convert application right to left *)
           raise NotConvertible;
@@ -642,7 +648,9 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
          in convert_stacks l2r infos lft1 lft2 v1 v2 cuniv
        with Not_found -> raise NotConvertible)
 
-    | (FFix (((op1, i1),(na1,tys1,cl1)),e1), FFix(((op2, i2),(_,tys2,cl2)),e2)) ->
+    | (FFix (((op1, i1),(na1,tys1,cl1)),e1,oi1), FFix(((op2, i2),(_,tys2,cl2)),e2,oi2)) ->
+        assert (oi1 = None);
+        assert (oi2 = None);
         if Int.equal i1 i2 && Array.equal Int.equal op1 op2
         then
           let n = Array.length cl1 in
@@ -661,7 +669,9 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
           convert_stacks l2r infos lft1 lft2 v1 v2 cuniv
         else raise NotConvertible
 
-    | (FCoFix ((op1,(na1,tys1,cl1)),e1), FCoFix((op2,(_,tys2,cl2)),e2)) ->
+    | (FCoFix ((op1,(na1,tys1,cl1)),e1,oi1), FCoFix((op2,(_,tys2,cl2)),e2,oi2)) ->
+        assert (oi1 = None);
+        assert (oi2 = None);
         if Int.equal op1 op2
         then
           let n = Array.length cl1 in
@@ -688,7 +698,9 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
         if Float64.equal f1 f2 then convert_stacks l2r infos lft1 lft2 v1 v2 cuniv
         else raise NotConvertible
 
-    | FCaseInvert (ci1,u1,pms1,p1,_,_,br1,e1), FCaseInvert (ci2,u2,pms2,p2,_,_,br2,e2) ->
+    | FCaseInvert (ci1,u1,pms1,p1,_,_,br1,e1,oi1), FCaseInvert (ci2,u2,pms2,p2,_,_,br2,e2,oi2) ->
+      assert (oi1 = None);
+      assert (oi2 = None);
       (if not (Ind.CanOrd.equal ci1.ci_ind ci2.ci_ind) then raise NotConvertible);
       let el1 = el_stack lft1 v1 and el2 = el_stack lft2 v2 in
       let fold c1 c2 cuniv = ccnv CONV l2r infos el1 el2 c1 c2 cuniv in
@@ -745,7 +757,7 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
      (* Should not happen because both (hd1,v1) and (hd2,v2) are in whnf *)
      | ( (FLetIn _, _) | (FCaseT _,_) | (FApp _,_) | (FCLOS _,_) | (FLIFT _,_)
        | (_, FLetIn _) | (_,FCaseT _) | (_,FApp _) | (_,FCLOS _) | (_,FLIFT _)
-       | (FLOCKED,_) | (_,FLOCKED) | (FForce _,_) | (_,FForce _)) -> assert false
+       | (FLOCKED,_) | (_,FLOCKED)) -> assert false
 
      | (FRel _ | FAtom _ | FInd _ | FFix _ | FCoFix _ | FCaseInvert _
        | FProd _ | FEvar _ | FInt _ | FFloat _ | FArray _ | FIrrelevant
@@ -767,7 +779,9 @@ and convert_stacks l2r infos lft1 lft2 stk1 stk2 cuniv =
             | (Zlfix(fx1,a1),Zlfix(fx2,a2)) ->
                 let cu2 = f fx1 fx2 cu1 in
                 cmp_rec a1 a2 cu2
-            | (Zlcase(ci1,l1,u1,pms1,p1,br1,e1),Zlcase(ci2,l2,u2,pms2,p2,br2,e2)) ->
+            | (Zlcase(ci1,l1,u1,pms1,p1,br1,e1,oi1),Zlcase(ci2,l2,u2,pms2,p2,br2,e2,oi2)) ->
+                assert (oi1 = None);
+                assert (oi2 = None);
                 if not (Ind.CanOrd.equal ci1.ci_ind ci2.ci_ind) then
                   raise NotConvertible;
                 let cu = cu1 in
@@ -838,8 +852,8 @@ and convert_return_clause mib mip l2r infos e1 e2 l1 l2 u1 u2 pms1 pms2 p1 p2 cu
     if Int.equal mip.mind_nrealargs mip.mind_nrealdecls then None
     else
       let ctx, _ = List.chop mip.mind_nrealdecls mip.mind_arity_ctxt in
-      let pms1 = inductive_subst mib u1 None pms1 in
-      let pms2 = inductive_subst mib u1 None pms2 in
+      let pms1 = inductive_subst mib u1 pms1 in
+      let pms2 = inductive_subst mib u1 pms2 in
       let open Context.Rel.Declaration in
       (* Add the inductive binder *)
       let dummy = mkProp in
@@ -854,8 +868,8 @@ and convert_branches mib mip l2r infos e1 e2 lft1 lft2 u1 u2 pms1 pms2 br1 br2 c
       if Int.equal mip.mind_consnrealdecls.(i) mip.mind_consnrealargs.(i) then None
       else
         let ctx, _ = List.chop mip.mind_consnrealdecls.(i) ctx in
-        let pms1 = inductive_subst mib u1 None pms1 in
-        let pms2 = inductive_subst mib u2 None pms2 in
+        let pms1 = inductive_subst mib u1 pms1 in
+        let pms2 = inductive_subst mib u2 pms2 in
         Some (ctx, u1, u2, pms1, pms2)
     in
     let c1 = br1.(i) in

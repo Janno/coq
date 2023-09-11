@@ -255,12 +255,12 @@ let type_of_apply env func funt argsv argstv =
       (** The return stack is known to be empty *)
       let () = assert (check_empty_stack stk) in
       match fterm_of typ with
-      | FProd (_, c1, c2, e) ->
+      | FProd (_, c1, c2, e, oi) ->
         let arg = argsv.(i) in
         let argt = argstv.(i) in
         let c1 = term_of_fconstr c1 in
         begin match conv_leq env argt c1 with
-        | () -> apply_rec (i+1) (mk_clos (CClosure.usubs_cons (inject arg) e) c2)
+        | () -> apply_rec (i+1) (mk_clos ?oi (CClosure.usubs_cons (inject arg) e) c2)
         | exception NotConvertible ->
           error_cant_apply_bad_type env
             (i+1,c1,argt)
