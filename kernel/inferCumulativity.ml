@@ -183,14 +183,16 @@ let rec infer_fterm cv_pb infos variances hd stk =
   | FRel _ -> infer_stack infos variances stk
   | FInt _ -> infer_stack infos variances stk
   | FFloat _ -> infer_stack infos variances stk
-  | FFlex Names.(RelKey _ | VarKey _ as fl) ->
+  | FFlex (Names.(RelKey _ | VarKey _ as fl), oi) ->
+    assert (oi = None);
     (* We could try to lazily unfold but then we have to analyse the
        universes in the bodies, not worth coding at least for now. *)
     begin match unfold_ref_with_args (fst infos) (snd infos) fl stk with
     | Some (hd,stk) -> infer_fterm cv_pb infos variances hd stk
     | None -> infer_stack infos variances stk
     end
-  | FFlex (Names.ConstKey con as fl) ->
+  | FFlex (Names.ConstKey con as fl, oi) ->
+    assert (oi = None);
     begin
       let def = unfold_ref_with_args (fst infos) (snd infos) fl stk in
       try

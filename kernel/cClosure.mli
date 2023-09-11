@@ -97,7 +97,7 @@ type force = int option
 type fterm =
   | FRel of int
   | FAtom of constr (** Metas and Sorts *)
-  | FFlex of table_key
+  | FFlex of table_key * force
   | FInd of pinductive
   | FConstruct of pconstructor
   | FApp of fconstr * fconstr array

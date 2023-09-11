@@ -431,7 +431,9 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
           raise NotConvertible
 
     (* 2 constants, 2 local defined vars or 2 defined rels *)
-    | (FFlex fl1, FFlex fl2) ->
+    | (FFlex (fl1,oi1), FFlex (fl2,oi2)) ->
+      assert (oi1 = None);
+      assert (oi2 = None);
       (try
          let nargs = same_args_size v1 v2 in
          let cuniv = conv_table_key infos.cnv_inf ~nargs fl1 fl2 cuniv in
@@ -486,7 +488,8 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
          eqappr cv_pb l2r infos (lft1, (c1, (s1 :: v1))) appr2 cuniv
        | None ->
          begin match t2 with
-          | FFlex fl2 ->
+          | FFlex (fl2,oi) ->
+            assert (oi = None);
             begin match unfold_ref_with_args infos.cnv_inf infos.rgt_tab fl2 v2 with
              | Some t2 ->
                eqappr cv_pb l2r infos appr1 (lft2, t2) cuniv
@@ -502,7 +505,8 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
          eqappr cv_pb l2r infos appr1 (lft2, (c2, (s2 :: v2))) cuniv
        | None ->
          begin match t1 with
-          | FFlex fl1 ->
+          | FFlex (fl1,oi) ->
+            assert (oi = None);
             begin match unfold_ref_with_args infos.cnv_inf infos.lft_tab fl1 v1 with
              | Some t1 ->
                eqappr cv_pb l2r infos (lft1, t1) appr2 cuniv
@@ -560,7 +564,8 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
           (el_lift lft1, (hd1, eta_expand_stack infos.cnv_inf x2 v1)) (el_lift lft2, (bd2, [])) cuniv
 
     (* only one constant, defined var or defined rel *)
-    | (FFlex fl1, c2)      ->
+    | (FFlex (fl1,oi), c2)      ->
+      assert (oi = None);
       begin match unfold_ref_with_args infos.cnv_inf infos.lft_tab fl1 v1 with
         | Some (def1,v1) ->
           (** By virtue of the previous case analyses, we know [c2] is rigid.
@@ -581,7 +586,8 @@ and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
            | _ -> raise NotConvertible)
       end
 
-    | (c1, FFlex fl2)      ->
+    | (c1, FFlex (fl2,oi))      ->
+       assert (oi = None);
        begin match unfold_ref_with_args infos.cnv_inf infos.rgt_tab fl2 v2 with
         | Some (def2, v2) ->
           (** Symmetrical case of above. *)

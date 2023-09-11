@@ -263,7 +263,7 @@ type fconstr = {
 and fterm =
   | FRel of int
   | FAtom of constr (* Metas and Sorts *)
-  | FFlex of table_key
+  | FFlex of table_key * force
   | FInd of pinductive
   | FConstruct of pconstructor
   | FApp of fconstr * fconstr array
@@ -388,7 +388,7 @@ let [@ocaml.warning "-32"] rec to_string (c : fconstr) : string =
   (match c.term with
   | FRel i -> Printf.sprintf "FRel %i" i
   | FAtom c -> Printf.sprintf "FAtom (%s)" (constr_to_string c)
-  | FFlex k -> Printf.sprintf "FFlex %s" (table_key_to_string k)
+  | FFlex (k,oi) -> Printf.sprintf "FFlex (%s,%s)" (table_key_to_string k) (force_to_string oi)
   | FInd _ -> Printf.sprintf "FInd _"
   | FConstruct (((i,n),m),_) -> Printf.sprintf "FConstruct (%s,%i,%i)" (Names.MutInd.to_string i) n m
   | FApp (h, args) -> Printf.sprintf "FApp (%s, [|%s|])" (to_string h) (String.concat ";" (Array.to_list (Array.map to_string args)))
@@ -490,7 +490,7 @@ let usubs_shft (n,(e,u)) = Esubst.subs_shft (n, e), u
    when the lift is 0. *)
 let rec lft_fconstr n ft =
   match ft.term with
-    | (FInd _|FConstruct _|FFlex(ConstKey _|VarKey _)|FInt _|FFloat _|FIrrelevant) -> ft
+    | (FInd _|FConstruct _|FFlex((ConstKey _|VarKey _),_)|FInt _|FFloat _|FIrrelevant) -> ft
     | FRel i -> {mark=ft.mark;term=FRel(i+n)}
     | FLambda(k,tys,f,e,oi) -> {mark=Cstr; term=FLambda(k,tys,f,usubs_shft(n,e),oi)}
     | FFix(fx,e,oi) ->
@@ -499,7 +499,7 @@ let rec lft_fconstr n ft =
       {mark=Cstr; term=FCoFix(cfx,usubs_shft(n,e),oi)}
     | FLIFT(k,m) -> lft_fconstr (n+k) m
     | FLOCKED -> assert false
-    | FFlex (RelKey _) | FAtom _ | FApp _ | FProj _ | FCaseT _ | FCaseInvert _ | FProd _
+    | FFlex (RelKey _, _) | FAtom _ | FApp _ | FProj _ | FCaseT _ | FCaseInvert _ | FProd _
       | FLetIn _ | FEvar _ | FCLOS _ | FArray _ | FPrimitive _ -> {mark=ft.mark; term=FLIFT(n,ft)}
 let lift_fconstr k f =
   if Int.equal k 0 then f else lft_fconstr k f
@@ -517,7 +517,7 @@ let clos_rel ?oi ((e, _) : usubs) i =
       {mark=Ntrl; term= FRel k}
     | Inr(k,Some p) ->
       if debug then Printf.printf "clos_rel: Inr(%i, Some(%i))\n%!" k p;
-        lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
+        lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p,oi)}
 
 (* since the head may be reducible, we might introduce lifts of 0 *)
 let compact_stack head stk =
@@ -587,8 +587,8 @@ let usubst_sort (_,u) s = match s with
 let mk_clos ?oi (e:usubs) t =
   match kind t with
     | Rel i -> clos_rel ?oi e i
-    | Var x -> {mark = Red; term = FFlex (VarKey x) }
-    | Const c -> {mark = Red; term = FFlex (ConstKey (usubst_punivs e c)) }
+    | Var x -> {mark = Red; term = FFlex (VarKey x,oi) }
+    | Const c -> {mark = Red; term = FFlex (ConstKey (usubst_punivs e c),oi) }
     | Sort s ->
       let s = usubst_sort e s in
       {mark = Ntrl; term = FAtom (mkSort s) }
@@ -719,10 +719,10 @@ let rec to_constr (lfts, usubst as ulfts) v =
   let subst_us c = subst_instance_constr usubst c in
   match v.term with
     | FRel i -> mkRel (Esubst.reloc_rel i lfts)
-    | FFlex (RelKey p) -> mkRel (Esubst.reloc_rel p lfts)
-    | FFlex (VarKey x) -> mkVar x
+    | FFlex (RelKey p,oi) -> assert (oi = None); mkRel (Esubst.reloc_rel p lfts)
+    | FFlex (VarKey x,oi) -> assert (oi = None); mkVar x
     | FAtom c -> subst_us (exliftn lfts c)
-    | FFlex (ConstKey op) -> subst_us (mkConstU op)
+    | FFlex (ConstKey op,oi) -> assert (oi = None); subst_us (mkConstU op)
     | FInd op -> subst_us (mkIndU op)
     | FConstruct op -> subst_us (mkConstructU op)
     | FCaseT (ci, u, pms, p, c, ve, env, oi) ->
@@ -869,7 +869,7 @@ let rec zip m stk =
         zip rf s
     | Zprimitive(_op,c,_,rargs,kargs)::s ->
       let args = List.rev_append rargs (m::List.map snd kargs) in
-      let f = {mark = Red; term = FFlex (ConstKey c)} in
+      let f = {mark = Red; term = FFlex (ConstKey c,None)} in (* TODO is oi=None correct? *)
       zip {mark=(neutr m.mark); term = FApp (f, Array.of_list args)} s
 
 let fapp_stack (m,stk) = zip m stk
@@ -1007,7 +1007,7 @@ let get_native_args op c stk =
       let () = update m h.mark h.term in
       strip_rec rnargs m depth  kargs s
     | (Zprimitive _ | ZcaseT _ | Zproj _ | Zfix _) :: _ | [] -> assert false
-  in strip_rec [] {mark = Red; term = FFlex(ConstKey c)} 0 kargs stk
+  in strip_rec [] {mark = Red; term = FFlex(ConstKey c,None)} 0 kargs stk (* TODO: is oi=None correct? *)
 
 let check_native_args op stk =
   let nargs = CPrimitives.arity op in
@@ -1269,7 +1269,7 @@ module FNativeEntries =
       match retro.Retroknowledge.retro_int63 with
       | Some c ->
         defined_int := true;
-        fint := { mark = Ntrl; term = FFlex (ConstKey (Univ.in_punivs c)) }
+        fint := { mark = Ntrl; term = FFlex (ConstKey (Univ.in_punivs c), None) }
       | None -> defined_int := false
 
     let defined_float = ref false
@@ -1279,7 +1279,7 @@ module FNativeEntries =
       match retro.Retroknowledge.retro_float64 with
       | Some c ->
         defined_float := true;
-        ffloat := { mark = Ntrl; term = FFlex (ConstKey (Univ.in_punivs c)) }
+        ffloat := { mark = Ntrl; term = FFlex (ConstKey (Univ.in_punivs c), None) }
       | None -> defined_float := false
 
     let defined_bool = ref false
@@ -1676,14 +1676,21 @@ let rec knr info tab m stk =
     (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (to_string m)
     (stack_to_string stk);
+  let red_set ?oi flags flag =
+    if Option.has_some oi then true else red_set flags flag
+  in
+  let red_transparent ?oi flags =
+    if Option.has_some oi then TransparentState.full else RedFlags.red_transparent flags
+  in
+
   let res =
   match m.term with
-  | FLambda(n,tys,f,e,oi) when red_set info.i_flags fBETA ->
+  | FLambda(n,tys,f,e,oi) when red_set ?oi info.i_flags fBETA ->
       (match get_args ?oi n tys f e stk with
           Inl e', s -> knit info tab e' f s
         | Inr lam, s -> (lam,s))
-  | FFlex fl when red_set info.i_flags fDELTA ->
-      (match ref_value_cache info (RedFlags.red_transparent info.i_flags) tab fl with
+  | FFlex (fl, oi) when red_set ?oi info.i_flags fDELTA ->
+      (match ref_value_cache info (red_transparent info.i_flags) tab fl with
         | Def v -> kni info tab v stk
         | Primitive op ->
           if check_native_args op stk then
@@ -1910,7 +1917,7 @@ and klt ?oi info tab (e : usubs) t =
   begin match Esubst.expand_rel i (fst e) with
   | Inl (n, mt) -> kl info tab @@ lift_fconstr n mt
   | Inr (k, None) -> if Int.equal k i then t else mkRel k
-  | Inr (k, Some p) -> kl info tab @@ lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
+  | Inr (k, Some p) -> kl info tab @@ lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p,oi)}
   end
 | App (hd, args) ->
   if debug then Printf.printf "klt(%i) App.\n%!" count;
@@ -2172,7 +2179,7 @@ let unfold_ref_with_args infos tab fl v =
   | Primitive op when check_native_args op v ->
     begin
       let c = match [@ocaml.warning "-4"] fl with ConstKey c -> c | _ -> assert false in
-      let m = {mark = Cstr; term = FFlex fl} in
+      let m = {mark = Cstr; term = FFlex (fl,None)} in
       match get_native_args op c v with
       | ((rargs, (kd,a):: nargs), v) ->
           assert (kd = CPrimitives.Kwhnf);
