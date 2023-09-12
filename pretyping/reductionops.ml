@@ -1099,7 +1099,17 @@ let clos_norm_flags flgs env sigma t =
       (Evarutil.create_clos_infos env sigma flgs)
       (CClosure.create_tab ())
       (Esubst.subs_id 0, Univ.Instance.empty) (EConstr.Unsafe.to_constr t))
-  with e when is_anomaly e -> user_err Pp.(str "Tried to normalize ill-typed term")
+  with e ->
+    let info = Exninfo.info e in
+    if is_anomaly e then begin
+      Printf.printf "EXC: %s\n%!" (Printexc.to_string e);
+      let bt = Exninfo.get_backtrace info in
+      Option.iter (fun bt ->
+        Printf.printf "====BACKTRACE====\n%s\n====BACKTRACE END====\n%!" (Exninfo.backtrace_to_string bt)
+      ) bt;
+      user_err ~info Pp.(str "Tried to normalize ill-typed term")
+    end else
+      Exninfo.iraise (e, info)
 
 let clos_whd_flags flgs env sigma t =
   try
@@ -1107,7 +1117,17 @@ let clos_whd_flags flgs env sigma t =
       (Evarutil.create_clos_infos env sigma flgs)
       (CClosure.create_tab ())
       (CClosure.inject (EConstr.Unsafe.to_constr t)))
-  with e when is_anomaly e -> user_err Pp.(str "Tried to normalize ill-typed term")
+  with e ->
+    let info = Exninfo.info e in
+    if is_anomaly e then begin
+      Printf.printf "EXC: %s\n%!" (Printexc.to_string e);
+      let bt = Exninfo.get_backtrace info in
+      Option.iter (fun bt ->
+        Printf.printf "====BACKTRACE====\n%s\n====BACKTRACE END====\n%!" (Exninfo.backtrace_to_string bt)
+      ) bt;
+      user_err ~info Pp.(str "Tried to normalize ill-typed term")
+    end else
+      Exninfo.iraise (e, info)
 
 let nf_beta = clos_norm_flags CClosure.beta
 let nf_betaiota = clos_norm_flags CClosure.betaiota
