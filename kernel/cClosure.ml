@@ -299,11 +299,6 @@ let set_ntrl v = v.mark <- Ntrl
 let mk_atom c = {mark=Ntrl;term=FAtom c}
 let mk_red f = {mark=Red;term=f}
 
-(* Could issue a warning if no is still Red, pointing out that we loose
-   sharing. *)
-let update v1 mark t =
-  v1.mark <- mark; v1.term <- t
-
 (** Reduction cache *)
 type infos_cache = {
   i_env : env;
@@ -363,7 +358,7 @@ type stack_member =
   | Zprimitive of CPrimitives.t * pconstant * fconstr * fconstr list * fconstr next_native_args
        (* operator, constr def, primitive as an fconstr, arguments already seen (in rev order), next arguments *)
   | Zshift of int
-  | Zupdate of fconstr
+  | Zupdate of fconstr * int    (* int for debugging *)
 
 and stack = stack_member list
 
@@ -378,12 +373,14 @@ let constr_to_string c = Pp.string_of_ppcmds (Constr.debug_print c)
 let force_to_string oi =
   match oi with Some i -> Printf.sprintf "Some (%i)" i | None -> "None"
 
+let mark_to_string mark =
+  match mark with
+  | Ntrl -> "Ntrl"
+  | Cstr -> "Cstr"
+  | Red -> "Red"
+
 let [@ocaml.warning "-32"] rec to_string (c : fconstr) : string =
-  (match c.mark with
-   | Ntrl -> "{mark=Ntrl; term="
-   | Cstr -> "{mark=Cstr; term="
-   | Red -> "{mark=Red; term="
-  )
+  Printf.sprintf "{mark=%s; term=" (mark_to_string c.mark)
   ^
   (match c.term with
   | FRel i -> Printf.sprintf "FRel %i" i
@@ -458,9 +455,16 @@ let [@ocaml.warning "-32"] rec stack_to_string s =
     | Zfix (_, s, oi) -> Printf.sprintf "Zfix (_, %s, %s)" (stack_to_string s) (force_to_string oi)
     | Zprimitive (op,_,_,_,_) -> Printf.sprintf "Zprimitive (%s,_,_,_,_)" (CPrimitives.to_string op)
     | Zshift i -> Printf.sprintf "Zshift %i" i
-    | Zupdate _ -> "Zupdate _"
+    | Zupdate (_,i) -> Printf.sprintf "Zupdate (_,%i)" i
   in
   String.concat " :: " (List.map member_to_string s) ^ " :: []"
+
+
+(* Could issue a warning if no is still Red, pointing out that we loose
+   sharing. *)
+let update i v1 mark t =
+  v1.mark <- mark; v1.term <- t;
+  if debug then Printf.printf "update: %i -> %s\n%!" i (to_string v1)
 
 let empty_stack = []
 let append_stack v s =
@@ -523,25 +527,28 @@ let clos_rel ?oi ((e, _) : usubs) i =
 let compact_stack head stk =
   let rec strip_rec depth = function
     | Zshift(k)::s -> strip_rec (depth+k) s
-    | Zupdate(m)::s ->
+    | Zupdate(m,i)::s ->
         (* Be sure to create a new cell otherwise sharing would be
            lost by the update operation *)
         let h' = lft_fconstr depth head in
         (** The stack contains [Zupdate] marks only if in sharing mode *)
-        let () = update m h'.mark h'.term in
+        let () = update i m h'.mark h'.term in
         strip_rec depth s
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zapp _ | Zprimitive _) :: _ | []) as stk -> zshift depth stk
   in
   strip_rec 0 stk
 
+let zupdate_counter = ref 0
 (* Put an update mark in the stack, only if needed *)
 let zupdate info m s =
   let share = info.i_cache.i_share in
   if share && begin match m.mark with Red -> true  | Ntrl | Cstr -> false end
   then
+    let cnt = !zupdate_counter in
+    incr zupdate_counter;
     let s' = compact_stack m s in
     let _ = m.term <- FLOCKED in
-    Zupdate(m)::s'
+    Zupdate(m, cnt)::s'
   else s
 
 let mk_lambda ?oi env t =
@@ -869,9 +876,9 @@ let rec zip m stk =
         zip fx (par @ append_stack [|m|] s)
     | Zshift(n)::s ->
         zip (lift_fconstr n m) s
-    | Zupdate(rf)::s ->
+    | Zupdate(rf,i)::s ->
       (** The stack contains [Zupdate] marks only if in sharing mode *)
-        let () = update rf m.mark m.term in
+        let () = update i rf m.mark m.term in
         zip rf s
     | Zprimitive(_op,c,_,rargs,kargs)::s ->
       let args = List.rev_append rargs (m::List.map snd kargs) in
@@ -897,9 +904,9 @@ let strip_update_shift_app_red head stk =
     | (Zapp args :: s) ->
         strip_rec (Zapp args :: rstk)
           {mark=h.mark;term=FApp(h,args)} depth s
-    | Zupdate(m)::s ->
+    | Zupdate(m,i)::s ->
       (** The stack contains [Zupdate] marks only if in sharing mode *)
-        let () = update m h.mark h.term in
+        let () = update i m h.mark h.term in
         strip_rec rstk m depth s
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zprimitive _) :: _ | []) as stk ->
       (h, (depth,List.rev rstk, stk))
@@ -930,9 +937,9 @@ let get_nth_arg head n stk =
           let stk' =
             List.rev (if Int.equal n 0 then rstk else (Zapp bef :: rstk)) in
           (Some (stk', args.(n)), append_stack aft s')
-    | Zupdate(m)::s ->
+    | Zupdate(m,i)::s ->
         (** The stack contains [Zupdate] mark only if in sharing mode *)
-        let () = update m h.mark h.term in
+        let () = update i m h.mark h.term in
         strip_rec rstk m n s
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zprimitive _) :: _ | []) as s -> (None, List.rev rstk @ s) in
   strip_rec [] head n stk
@@ -950,13 +957,13 @@ let usubs_consv v s =
 
 (* Beta reduction: look for an applied argument in the stack.
    Since the encountered update marks are removed, h must be a whnf *)
-let rec get_args ?oi n tys f e = function
-    | Zupdate r :: s ->
+let rec get_args ~oi n tys f e = function
+    | Zupdate (r,i) :: s ->
         (** The stack contains [Zupdate] mark only if in sharing mode *)
-        let () = update r Cstr (FLambda(n,tys,f,e,oi)) in
-        get_args n tys f e s
+        let () = update i r Cstr (FLambda(n,tys,f,e,oi)) in
+        get_args ~oi n tys f e s
     | Zshift k :: s ->
-        get_args n tys f (usubs_shft (k,e)) s
+        get_args ~oi n tys f (usubs_shft (k,e)) s
     | Zapp l :: s ->
         let na = Array.length l in
         if n == na then (Inl (usubs_consn l 0 na e), s)
@@ -965,7 +972,7 @@ let rec get_args ?oi n tys f e = function
           (Inl (usubs_consn l 0 n e), Zapp eargs :: s)
         else (* more lambdas *)
           let etys = List.skipn na tys in
-          get_args (n-na) etys f (usubs_consn l 0 na e) s
+          get_args ~oi (n-na) etys f (usubs_consn l 0 na e) s
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zprimitive _) :: _ | []) as stk ->
       (Inr {mark=Cstr; term=FLambda(n,tys,f,e,oi)}, stk)
 
@@ -1009,8 +1016,8 @@ let get_native_args op c stk =
         | rnargs, kargs, _ ->
           strip_rec rnargs {mark = h.mark;term=FApp(h, args)} depth kargs s'
       end
-    | Zupdate(m) :: s ->
-      let () = update m h.mark h.term in
+    | Zupdate(m,i) :: s ->
+      let () = update i m h.mark h.term in
       strip_rec rnargs m depth  kargs s
     | (Zprimitive _ | ZcaseT _ | Zproj _ | Zfix _) :: _ | [] -> assert false
   in strip_rec [] {mark = Red; term = FFlex(ConstKey c,None)} 0 kargs stk (* TODO: is oi=None correct? *)
@@ -1555,9 +1562,9 @@ let rec skip_irrelevant_stack info stk = match stk with
   if is_irrelevant info ci.ci_relevance then skip_irrelevant_stack info s
   else stk
 | Zprimitive _ :: _ -> assert false (* no irrelevant primitives so far *)
-| Zupdate m :: s ->
+| Zupdate (m,i) :: s ->
   (** The stack contains [Zupdate] marks only if in sharing mode *)
-  let () = update m mk_irrelevant.mark mk_irrelevant.term in
+  let () = update i m mk_irrelevant.mark mk_irrelevant.term in
   skip_irrelevant_stack info s
 
 let is_irrelevant_constructor infos (ind,_) = match infos.i_cache.i_mode with
@@ -1574,7 +1581,7 @@ let is_irrelevant_projection infos p = match infos.i_cache.i_mode with
    constructor, cofix, letin, constant), or a neutral term (product,
    inductive) *)
 let rec knh info m stk =
-  if debug then Printf.printf "knh fterm(full=%s): %s\nknh stack: %s\n%!"
+  if debug then Printf.printf "knh fterm(full=%s): %s\n--- stack: %s\n%!"
     (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (to_string m)
     (stack_to_string stk);
@@ -1611,7 +1618,7 @@ let rec knh info m stk =
 
 (* The same for pure terms *)
 and knht ~(oi:int option) info (e : usubs) t stk =
-  if debug then Printf.printf "knht fterm(full=%s,oi=%s): %s\nknht usubs: %s\nknht stack: %s\n%!"
+  if debug then Printf.printf "knht fterm(full=%s,oi=%s): %s\n---  usubs: %s\n---  stack: %s\n%!"
     (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (force_to_string oi)
     (Pp.string_of_ppcmds (Constr.debug_print t))
@@ -1679,7 +1686,7 @@ let knit_counter = ref 0
 let rec knr info tab m stk =
   let count = !knr_counter in
   incr knr_counter;
-  if debug then Printf.printf "knr(%i) fterm(full=%s): %s\nknr stack: %s\n%!"
+  if debug then Printf.printf "knr(%i) fterm(full=%s): %s\n--- stack: %s\n%!"
     count
     (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (to_string m)
@@ -1695,7 +1702,7 @@ let rec knr info tab m stk =
   let res =
   match m.term with
   | FLambda(n,tys,f,e,oi) when red_set ?oi info.i_flags fBETA ->
-      (match get_args ?oi n tys f e stk with
+      (match get_args ~oi n tys f e stk with
           Inl e', s -> knit ~oi info tab e' f s
         | Inr lam, s -> (lam,s))
   | FFlex (fl, oi) when red_set ?oi info.i_flags fDELTA ->
@@ -1810,7 +1817,7 @@ let rec knr info tab m stk =
 and kni info tab m stk =
   let count = !kni_counter in
   incr kni_counter;
-  if debug then Printf.printf "kni(%i) fterm(full=%s): %s\nkni stack: %s\n%!"
+  if debug then Printf.printf "kni(%i) fterm(full=%s): %s\n--- stack: %s\n%!"
     count
     (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (to_string m)
@@ -1829,7 +1836,7 @@ and kni info tab m stk =
 and knit ~(oi:int option) info tab (e : usubs) t stk =
   let count = !knit_counter in
   incr knit_counter;
-  if debug then Printf.printf "knit(%i) fterm(full=%s,oi=%s): %s\nknit usubs: %s\nknit stack: %s\n%!"
+  if debug then Printf.printf "knit(%i) fterm(full=%s,oi=%s): %s\n---  usubs: %s\n---  stack: %s\n%!"
     count
     (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
     (force_to_string oi)
@@ -2057,7 +2064,7 @@ and zip_term info tab m stk =
     zip_term info tab h s
 | Zshift(n)::s ->
     zip_term info tab (lift n m) s
-| Zupdate(_rf)::s ->
+| Zupdate(_rf,_i)::s ->
     zip_term info tab m s
 | Zprimitive(_,c,_,rargs, kargs)::s ->
     let kargs = List.map (fun (_,a) -> kl info tab a) kargs in
@@ -2151,8 +2158,8 @@ let whd_stack infos tab m stk = match m.mark with
 
 let create_conv_infos ?univs ?(evars=default_evar_handler) flgs env =
   let univs = Option.default (universes env) univs in
-  (* let share = (Environ.typing_flags env).Declarations.share_reduction in *)
-  let share = false in
+  let share = (Environ.typing_flags env).Declarations.share_reduction in
+  (* let share = false in *)
   let cache = {
     i_env = env;
     i_sigma = evars;
@@ -2164,8 +2171,8 @@ let create_conv_infos ?univs ?(evars=default_evar_handler) flgs env =
 
 let create_clos_infos ?univs ?(evars=default_evar_handler) flgs env =
   let univs = Option.default (universes env) univs in
-  (* let share = (Environ.typing_flags env).Declarations.share_reduction in *)
-  let share = false in
+  let share = (Environ.typing_flags env).Declarations.share_reduction in
+  (* let share = false in *)
   let cache = {
     i_env = env;
     i_sigma = evars;

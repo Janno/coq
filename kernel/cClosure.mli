@@ -135,7 +135,7 @@ type stack_member =
   | Zprimitive of CPrimitives.t * pconstant * fconstr * fconstr list * fconstr next_native_args
        (* operator, constr def, primitive as an fconstr, arguments already seen (in rev order), next arguments *)
   | Zshift of int
-  | Zupdate of fconstr
+  | Zupdate of fconstr * int
 
 and stack = stack_member list
 
