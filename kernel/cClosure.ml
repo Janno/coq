@@ -1985,7 +1985,7 @@ and klt ?oi info tab (e : usubs) t =
 (* no redex: go up for atoms and already normalized terms, go down
    otherwise. *)
 and norm_head info tab m =
-  if debug then Printf.printf "norm head.\n%!";
+  if debug then Printf.printf "norm head: %s\n%!" (to_string m);
   if is_val m then term_of_fconstr m else
     match [@ocaml.warning "-4"] m.term with
       | FLambda(_n,tys,f,e,oi) ->
