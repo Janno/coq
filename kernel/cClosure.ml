@@ -807,6 +807,7 @@ let rec to_constr (lfts, usubst as ulfts) v =
       mkArray(u, t, def,ty)
 
     | FCLOS (t,env,oi) ->
+      (if oi <> None then Printf.printf "to_constr FLCOS term: %s\n%!" (to_string v));
       assert (oi = None);
       if Esubst.is_subs_id (fst env) && Esubst.is_lift_id lfts then
         subst_instance_constr (usubst_instance ulfts (snd env)) t
@@ -1692,7 +1693,7 @@ let rec knr info tab m stk =
     if Option.has_some oi then TransparentState.full else red_transparent flags
   in
 
-  let res =
+  (* let res = *)
   match m.term with
   | FLambda(n,tys,f,e,oi) when red_set ?oi info.i_flags fBETA ->
       (match get_args ?oi n tys f e stk with
@@ -1799,12 +1800,12 @@ let rec knr info tab m stk =
   | FLOCKED | FCLOS _ | FApp _ | FCaseT _ | FLIFT _ ->
     (* ruled out by knh(t) *)
     assert false
-  in
-  if debug then Printf.printf "knr(%i) result: %s @ %s\n%!"
-    count
-    (to_string (fst res))
-    (stack_to_string (snd res));
-  res
+  (* in *)
+  (* if debug then Printf.printf "knr(%i) result: %s @ %s\n%!" *)
+  (*   count *)
+  (*   (to_string (fst res)) *)
+  (*   (stack_to_string (snd res)); *)
+  (* res *)
 
 (* Computes the weak head normal form of a term *)
 and kni info tab m stk =
@@ -1820,12 +1821,14 @@ and kni info tab m stk =
     count
     (to_string hm)
     (stack_to_string s);
-  let res = knr info tab hm s in
-  if debug then Printf.printf "kni(%i) after knr: %s @ %s\n%!"
-    count
-    (to_string (fst res))
-    (stack_to_string (snd res));
-  res
+  (* let res = *)
+    knr info tab hm s
+  (* in *)
+  (* if debug then Printf.printf "kni(%i) after knr: %s @ %s\n%!" *)
+  (*   count *)
+  (*   (to_string (fst res)) *)
+  (*   (stack_to_string (snd res)); *)
+  (* res *)
 and knit ~(oi:int option) info tab (e : usubs) t stk =
   let count = !knit_counter in
   incr knit_counter;
@@ -1841,12 +1844,14 @@ and knit ~(oi:int option) info tab (e : usubs) t stk =
     count
     (to_string ht)
     (stack_to_string s);
-  let res = knr info tab ht s in
-  if debug then Printf.printf "knit(%i) after knr: %s @ %s\n%!"
-    count
-    (to_string (fst res))
-    (stack_to_string (snd res));
-  res
+  (* let res = *)
+    knr info tab ht s
+  (* in *)
+  (* if debug then Printf.printf "knit(%i) after knr: %s @ %s\n%!" *)
+  (*   count *)
+  (*   (to_string (fst res)) *)
+  (*   (stack_to_string (snd res)); *)
+  (* res *)
 
 and case_inversion ?oi info tab ci u params indices v =
   let open Declarations in
@@ -1910,16 +1915,19 @@ let rec kl info tab m =
     if debug then Printf.printf "kl(%i) before norm_head.\n%!" count;
     let nt = norm_head info tab nm in
     if debug then Printf.printf "kl(%i)  after norm_head.\n%!" count;
-    let res = zip_term info tab nt s in
-    if debug then Printf.printf "kl(%i)  after zip_term.\n%!" count;
-    res
+    (* let res = *)
+      zip_term info tab nt s
+    (* in *)
+    (* if debug then Printf.printf "kl(%i)  after zip_term.\n%!" count; *)
+    (* res *)
 
 and klt ?oi info tab (e : usubs) t =
   let count = !klt_counter in
   incr klt_counter;
-  if debug then Printf.printf "klt(%i) fterm(full=%s): %s\nklt usubs: %s\n%!"
+  if debug then Printf.printf "klt(%i) fterm(full=%s,oi=%s): %s\nklt usubs: %s\n%!"
       count
       (match info_full info with None -> "def" | Some true -> "full" | Some false -> "id")
+      (force_to_string oi)
     (Pp.string_of_ppcmds (Constr.debug_print t))
     (usubs_to_string e);
   match kind t with
@@ -1970,15 +1978,17 @@ and klt ?oi info tab (e : usubs) t =
   if debug then Printf.printf "klt(%i) before norm_head.\n%!" count;
   let nt = norm_head info tab nm in
   if debug then Printf.printf "klt(%i)  after norm_head.\n%!" count;
-  let res = zip_term info tab nt s in
-  if debug then Printf.printf "klt(%i)  after zip_term.\n%!" count;
-  res
+  (* let res = *)
+    zip_term info tab nt s
+  (* in *)
+  (* if debug then Printf.printf "klt(%i)  after zip_term.\n%!" count; *)
+  (* res *)
 | Meta _ | Sort _ | Ind _ | Construct _ | Int _ | Float _ -> subst_instance_constr (snd e) t
 
 (* no redex: go up for atoms and already normalized terms, go down
    otherwise. *)
 and norm_head info tab m =
-  if debug then Printf.printf "norm head.\n%!";
+  if debug then Printf.printf "norm head: %s\n%!" (to_string m);
   if is_val m then term_of_fconstr m else
     match [@ocaml.warning "-4"] m.term with
       | FLambda(_n,tys,f,e,oi) ->
