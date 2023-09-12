@@ -27,6 +27,28 @@ Proof. syn_refl. Qed.
 Goal WHNF ((fun f => f (1 + 1)) (fun x => block x)) = block (1 + 1).
 Proof. syn_refl. Qed.
 
+Inductive True := I.
+Definition id : True -> True := fun x => x.
+
+Goal WHNF (unblock (let x := (fun x : id I = I => True) in block x)) = (fun x : I = I => True).
+Proof. syn_refl. Qed.
+
+Goal WHNF (unblock (let x := forall x : id I = I, True in block x)) = (forall x : I = I, True).
+Proof. syn_refl. Qed.
+
+Goal WHNF (unblock (let x := id I in block (forall u:unit, x = x))) = (forall (u:unit), I = I).
+Proof. syn_refl. Qed.
+
+Eval lazywhnf in (unblock (let x := 0 + 0 in block x)).
+Goal WHNF (unblock (let x := 1 + 1 in block x)) = 2.
+Proof. syn_refl. Qed.
+
+Eval lazywhnf in @unblock bool (
+                     let x : nat := 0 in
+                     let y : bool := match x return bool with 0 => true | S _ => false end in
+                     @block bool (y)
+                   ).
+
 Eval lazywhnf in run (block 0) (fun x => x).
 Eval lazywhnf in run (block (1+1)) (fun x => x).
 
@@ -73,9 +95,23 @@ Goal WHNF (block (run ((fun n => block n) (2 + 2)) (fun x : nat => 2 * 1)))
         = (block ((fun _ : nat => 2 * 1) 4)).
 Proof. syn_refl. Qed.
 
+Inductive n := N | O.
+Definition a (x y : n) :=
+  match x with
+  | N => y
+  | O => O
+  end.
+Eval lazywhnf in block (unblock ((fun x => block (a x O)) (a N N))).
+Eval lazywhnf in block (unblock ((fun x => block x) (a N N))).
+
 Goal WHNF (block (run ((fun n => block (n + 1)) (2 + 2)) (fun x : nat => 2 * 1)))
         = (block ((fun _ : nat => 2 * 1) (4 + 1))).
 Proof. syn_refl. Qed.
+
+
+Eval lazy in block (0 + 0).
+Eval lazywhnf in (block (run (block (0 + 0)) (fun x : nat => I))).
+Eval lazywhnf in (block (run (let n := 2 + 2 in block (n + 1)) (fun x : nat => 2 * 1))).
 
 Goal WHNF (block (run (let n := 2 + 2 in block (n + 1)) (fun x : nat => 2 * 1)))
         = (block ((fun _ : nat => 2 * 1) (4 + 1))).
@@ -87,6 +123,20 @@ Proof. syn_refl. Qed.
 
 Goal WHNF (block (unblock (let n := 0 + 0 in block (n + n))))
         = block (0 + 0).
+Proof. syn_refl. Qed.
+
+Goal WHNF (block (unblock (let n := 0 + 0 in block (1 + unblock (let m := 0 + 0 in block (1 + m))))))
+        = block (1 + (1 + 0)).
+Proof. syn_refl. Qed.
+
+Goal WHNF (block (unblock (
+                      let n := 0 + 0 in
+                      block (1 + n + unblock (
+                                     let m := 2 + 2 in
+                                     block (1 + m + unblock (
+                                                        let k := 3 + 3 in
+                                                        block (1 + n + m + k))))))))
+        = block (1 + 0 + (1 + 4 + (1 + 0 + 4 + 6))).
 Proof. syn_refl. Qed.
 
 Goal LAZY (run (block (1 + 1)) (fun x => x + x)) = 4.
@@ -140,3 +190,11 @@ End AllArgs.
 
 (* Axiom H : (fun x => forall y, y = x) (1 + 1). *)
 (* Goal True. let t := constr:(H 0) in match type of t with 0 = 1 + 1 => idtac end. Abort. *)
+
+Module FunctionTypes.
+  (* The example below should not call reduction on [id id R] _at all_! *)
+  Inductive D := | d.
+  Inductive R := | r (b: D).
+  Definition id (x:Set) := x.
+  Eval lazywhnf in @unblock R (let f := (fun x : id (id R) => block x) in @block R (@unblock R (f (r d)))).
+End FunctionTypes.

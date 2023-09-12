@@ -130,8 +130,8 @@ type 'a next_native_args = (CPrimitives.arg_kind * 'a) list
 type stack_member =
   | Zapp of fconstr array
   | ZcaseT of case_info * Univ.Instance.t * constr array * case_return * case_branch array * usubs * force
-  | Zproj of Projection.Repr.t
-  | Zfix of fconstr * stack
+  | Zproj of Projection.Repr.t * force
+  | Zfix of fconstr * stack * force
   | Zprimitive of CPrimitives.t * pconstant * fconstr * fconstr list * fconstr next_native_args
        (* operator, constr def, primitive as an fconstr, arguments already seen (in rev order), next arguments *)
   | Zshift of int
@@ -163,7 +163,7 @@ val usubst_instance : 'a Univ.puniverses -> Univ.Instance.t -> Univ.Instance.t
    [create_clos_infos], inject the term to reduce with [inject]; then use
    a reduction function *)
 
-val inject : constr -> fconstr
+val inject : ?oi:int -> constr -> fconstr
 
 (** mk_atom: prevents a term from being evaluated *)
 val mk_atom : constr -> fconstr
@@ -255,6 +255,7 @@ val set_conv : (clos_infos -> clos_tab -> fconstr -> fconstr -> bool) -> unit
 val lift_fconstr      : int -> fconstr -> fconstr
 val lift_fconstr_vect : int -> fconstr array -> fconstr array
 
+(* TODO: remove ?oi from the interface *)
 val mk_clos      : ?oi:int -> usubs -> constr -> fconstr
 val mk_clos_vect : ?oi:int -> usubs -> constr array -> fconstr array
 

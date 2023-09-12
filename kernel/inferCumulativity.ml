@@ -266,7 +266,7 @@ and infer_stack infos variances (stk:CClosure.stack) =
     let variances = match z with
       | Zapp v -> infer_vect infos variances v
       | Zproj _ -> variances
-      | Zfix (fx,a) ->
+      | Zfix (fx,a,_) ->
         let variances = infer_fterm CONV infos variances fx [] in
         infer_stack infos variances a
       | ZcaseT (ci,u,pms,p,br,e,oi) ->
