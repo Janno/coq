@@ -863,16 +863,15 @@ let rec zip m stk =
     | [] -> m
     | Zapp args :: s -> zip {mark=neutr m.mark; term=FApp(m, args)} s
     | ZcaseT(ci, u, pms, p, br, e, oi)::s ->
-        assert (oi = None);     (* TODO: do we ever need to force here? *)
         let t = FCaseT(ci, u, pms, p, m, br, e, oi) in
         let mark = (neutr m.mark) in
         zip {mark; term=t} s
     | Zproj (p,oi) :: s ->
-        assert (oi = None);     (* TODO: do we ever need to force here? *)
+        ignore oi;     (* TODO: do we ever need to force here? *)
         let mark = (neutr m.mark) in
         zip {mark; term=FProj(Projection.make p true,m)} s
     | Zfix(fx,par,oi)::s ->
-        assert (oi = None);     (* TODO: do we ever need to force here? *)
+        ignore oi;     (* TODO: do we ever need to force here? *)
         zip fx (par @ append_stack [|m|] s)
     | Zshift(n)::s ->
         zip (lift_fconstr n m) s
@@ -2030,8 +2029,9 @@ and norm_head info tab m =
       | FPrimitive ((CPrimitives.Unblock | CPrimitives.Block | CPrimitives.Run), c, _, args) ->
         mkApp (mkConstU c,
                Array.mapi (fun i m -> if i <> 1 then kl info tab m else term_of_fconstr m) args)
+      | FApp (h,args) -> mkApp (norm_head info tab h, Array.map (kl info tab) args)
       | FLOCKED | FRel _ | FAtom _ | FFlex _ | FInd _ | FConstruct _
-      | FApp _ | FCaseT _ | FCaseInvert _ | FLIFT _ | FCLOS _ | FInt _
+      | FCaseT _ | FCaseInvert _ | FLIFT _ | FCLOS _ | FInt _
       | FFloat _ -> term_of_fconstr m
       | FIrrelevant -> assert false (* only introduced when converting *)
       | FPrimitive (_, _, _, _) -> assert false (* All other primitives should be fully reduced *)
