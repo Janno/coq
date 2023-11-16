@@ -72,10 +72,9 @@ let coq_unit_judge env sigma =
   | None -> sigma, unit_judge_fallback
 
 let unfold_projection env evd ts p r c =
-  let cst = Projection.constant p in
-    if TransparentState.is_transparent_constant ts cst then
-      Some (mkProj (Projection.unfold p, r, c))
-    else None
+  if TransparentState.is_transparent_projection ts (Projection.repr p) then
+    Some (mkProj (Projection.unfold p, r, c))
+  else None
 
 let eval_flexible_term ts env evd c =
   match EConstr.kind evd c with
@@ -170,9 +169,11 @@ let occur_rigidly flags env evd (evk,_) t =
     | Construct _ -> Normal false
     | Ind _ | Sort _ -> Rigid false
     | Proj (p, _, c) ->
-      let cst = Projection.constant p in
-      let rigid = not (TransparentState.is_transparent_constant flags.open_ts cst) in
-        if rigid then aux c
+       let rigid =
+         let p = Projection.repr p in
+         not (TransparentState.is_transparent_projection flags.open_ts p)
+       in
+       if rigid then aux c
         else (* if the evar appears rigidly in c then this elimination
                 cannot reduce and we have a rigid occurrence, otherwise
                 we don't know. *)
@@ -933,28 +934,6 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
           in
             ise_try evd [f1; f2]
 
-        (* Catch the p.c ~= p c' cases *)
-        | Proj (p,_,c), Const (p',u) when QConstant.equal env (Projection.constant p) p' ->
-          let res =
-            try Some (destApp evd (Retyping.expand_projection env evd p c []))
-            with Retyping.RetypeError _ -> None
-          in
-            (match res with
-            | Some (f1,args1) ->
-              evar_eqappr_x flags env evd pbty (f1,Stack.append_app args1 sk1)
-                appr2
-            | None -> UnifFailure (evd,NotSameHead))
-
-        | Const (p,u), Proj (p',_,c') when QConstant.equal env p (Projection.constant p') ->
-          let res =
-            try Some (destApp evd (Retyping.expand_projection env evd p' c' []))
-            with Retyping.RetypeError _ -> None
-          in
-            (match res with
-            | Some (f2,args2) ->
-              evar_eqappr_x flags env evd pbty appr1 (f2,Stack.append_app args2 sk2)
-            | None -> UnifFailure (evd,NotSameHead))
-
         | _, _ ->
         let f1 i =
           (* Gather the universe constraints that would make term1 and term2 equal.
@@ -1157,29 +1136,6 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
           |_, (UnifFailure _ as x) -> x
           |None, Success i' -> evar_conv_x flags env i' CONV c1 c2
           |Some _, Success _ -> UnifFailure (evd,NotSameHead)
-          end
-
-        (* Catch the c.(p) ~= p c' cases *)
-        | Proj (p1,_,c1), Const (p2,_) when QConstant.equal env (Projection.constant p1) p2 ->
-          let c1 =
-            try Some (destApp evd (Retyping.expand_projection env evd p1 c1 []))
-            with Retyping.RetypeError _ -> None
-          in
-          begin match c1 with
-          | Some (c1,new_args) ->
-            rigids env evd (Stack.append_app new_args sk1) c1 sk2 term2
-          | None -> UnifFailure (evd,NotSameHead)
-          end
-
-        | Const (p1,_), Proj (p2,_,c2) when QConstant.equal env p1 (Projection.constant p2) ->
-          let c2 =
-            try Some (destApp evd (Retyping.expand_projection env evd p2 c2 []))
-            with Retyping.RetypeError _ -> None
-          in
-          begin match c2 with
-          | Some (c2,new_args) ->
-            rigids env evd sk1 term1 (Stack.append_app new_args sk2) c2
-          | None -> UnifFailure (evd,NotSameHead)
           end
 
         | (Ind _ | Sort _ | Prod _ | CoFix _ | Fix _ | Rel _ | Var _ | Const _ | Int _ | Float _ | Array _ | Evar _ | Lambda _), _ ->
