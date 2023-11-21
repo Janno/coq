@@ -230,6 +230,7 @@ let v_oracle =
     v_hmap v_cst v_conv_level;
     v_pred v_id;
     v_pred v_cst;
+    v_pred v_proj_repr;
   |]
 
 let v_template_arity =
