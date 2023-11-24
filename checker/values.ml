@@ -228,6 +228,7 @@ let v_oracle =
   v_tuple "oracle" [|
     v_map v_id v_conv_level;
     v_hmap v_cst v_conv_level;
+    v_hmap v_proj_repr v_conv_level;
     v_pred v_id;
     v_pred v_cst;
     v_pred v_proj_repr;
