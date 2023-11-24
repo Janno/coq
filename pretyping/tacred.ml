@@ -526,7 +526,7 @@ let match_eval_ref_value env sigma constr stack =
     else
       None
   | Proj (p, r, c) when not (Projection.unfolded p) ->
-     if is_evaluable env (EvalConstRef (Projection.constant p)) then
+     if is_evaluable env (EvalProjectionRef (Projection.repr p)) then
        Some (mkProj (Projection.unfold p, r, c))
      else None
   | Var id when is_evaluable env (EvalVarRef id) ->
@@ -738,7 +738,7 @@ and whd_simpl_stack allowed_reds env sigma =
       | Proj (p, _, c) ->
         let ans =
            let unf = Projection.unfolded p in
-           if unf || is_evaluable env (EvalConstRef (Projection.constant p)) then
+           if unf || is_evaluable env (EvalProjectionRef (Projection.repr p)) then
              let npars = Projection.npars p in
              match unf, ReductionBehaviour.get (Projection.constant p) with
               | false, Some NeverUnfold -> NotReducible
