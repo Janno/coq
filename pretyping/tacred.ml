@@ -75,15 +75,20 @@ let value_of_evaluable_ref env evref u =
   | Evaluable.EvalProjectionRef _ ->
     assert false (* TODO *)
 
-let evaluable_of_global_reference env = function (* TODO projections *)
-  | GlobRef.ConstRef cst when is_evaluable_const env cst -> Evaluable.EvalConstRef cst
+let evaluable_of_global_reference env = function
+  | GlobRef.ConstRef cst when is_evaluable_const env cst ->
+      begin
+        match Structures.PrimitiveProjections.find_opt cst with
+        | None -> Evaluable.EvalConstRef cst
+        | Some p -> Evaluable.EvalProjectionRef p
+      end
   | GlobRef.VarRef id when is_evaluable_var env id -> Evaluable.EvalVarRef id
   | r -> error_not_evaluable r
 
 let global_of_evaluable_reference = function
   | Evaluable.EvalConstRef cst -> GlobRef.ConstRef cst
   | Evaluable.EvalVarRef id -> GlobRef.VarRef id
-  | Evaluable.EvalProjectionRef _ -> assert false (* TODO *)
+  | Evaluable.EvalProjectionRef p -> GlobRef.ConstRef (Projection.Repr.constant p)
 
 type evaluable_reference =
   | EvalConst of Constant.t
