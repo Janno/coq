@@ -959,24 +959,26 @@ let rec unify_0_with_initial_metas (sigma,ms,es as subst : subst0) conv_at_top e
 
   and unify_app (curenv, nb as curenvnb) pb opt (sigma, metas, evars as substn : subst0) cM f1 l1 cN f2 l2 =
     try
-      let needs_expansion p c' =
+      let needs_expansion p c' l l' =
         match EConstr.kind sigma c' with
-        | Meta _ -> true
-        | Evar _ -> true
-        | Const (c, u) -> Environ.QConstant.equal env c (Projection.constant p)
+        | Meta _ | Evar _ -> Array.length l' <= Projection.npars p + 1 + Array.length l
         | _ -> false
       in
-      let expand_proj c c' l =
+      let expand_proj c c' l l' =
         match EConstr.kind sigma c with
-        | Proj (p, _, t) when not (Projection.unfolded p) && needs_expansion p c' ->
-          (try destApp sigma (Retyping.expand_projection curenv sigma p t (Array.to_list l))
+        | Proj (p, _, t) when not (Projection.unfolded p) && needs_expansion p c' l l' ->
+          (try
+             (* TODO: Don't call expansion, instead produce eta expanded prim proj directly *)
+             let c = Retyping.expand_projection curenv sigma p t (Array.to_list l) in
+             let c = whd_const (Projection.constant p) curenv sigma c in
+             destApp sigma c
            with RetypeError _ -> (* Unification can be called on ill-typed terms, due
                                      to FO and eta in particular, fail gracefully in that case *)
              (c, l))
         | _ -> (c, l)
       in
-      let f1, l1 = expand_proj f1 f2 l1 in
-      let f2, l2 = expand_proj f2 f1 l2 in
+      let f1, l1 = expand_proj f1 f2 l1 l2 in
+      let f2, l2 = expand_proj f2 f1 l2 l1 in
       let opta = {opt with at_top = true; with_types = false} in
       let optf = {opt with at_top = true; with_types = true} in
       let (f1,l1,f2,l2) = adjust_app_array_size f1 l1 f2 l2 in
