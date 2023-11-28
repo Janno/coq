@@ -934,6 +934,28 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
           in
             ise_try evd [f1; f2]
 
+         (* Catch the p.c ~= p c' cases *)
+         | Proj (p,_,c), Const (p',u) when QConstant.equal env (Projection.constant p) p' ->
+           let res =
+             try Some (destApp evd (Retyping.expand_projection env evd p c []))
+             with Retyping.RetypeError _ -> None
+           in
+             (match res with
+             | Some (f1,args1) ->
+               evar_eqappr_x flags env evd pbty (f1,Stack.append_app args1 sk1)
+                 appr2
+             | None -> UnifFailure (evd,NotSameHead))
+
+         | Const (p,u), Proj (p',_,c') when QConstant.equal env p (Projection.constant p') ->
+           let res =
+             try Some (destApp evd (Retyping.expand_projection env evd p' c' []))
+             with Retyping.RetypeError _ -> None
+           in
+             (match res with
+             | Some (f2,args2) ->
+               evar_eqappr_x flags env evd pbty appr1 (f2,Stack.append_app args2 sk2)
+             | None -> UnifFailure (evd,NotSameHead))
+
         | _, _ ->
         let f1 i =
           (* Gather the universe constraints that would make term1 and term2 equal.
