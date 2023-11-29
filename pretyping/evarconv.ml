@@ -711,8 +711,8 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
                                consume l2r apprF apprM;
                                delta]
     in
-      match EConstr.kind evd termM with
-      | Proj (p, _, c) when not (Stack.is_empty skF) ->
+      match EConstr.kind evd vM with
+      | Proj (p, _, c) when not (Projection.unfolded p) && not (Stack.is_empty skF) ->
         (* Might be ?X args = p.c args', and we have to eta-expand the
            primitive projection if |args| >= |args'|+1. *)
         let nargsF = Stack.args_size skF and nargsM = Stack.args_size skM in
