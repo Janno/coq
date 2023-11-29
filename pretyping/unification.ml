@@ -959,22 +959,31 @@ let rec unify_0_with_initial_metas (sigma,ms,es as subst : subst0) conv_at_top e
 
   and unify_app (curenv, nb as curenvnb) pb opt (sigma, metas, evars as substn : subst0) cM f1 l1 cN f2 l2 =
     try
-      let needs_expansion p c' l l' =
-        match EConstr.kind sigma c' with
-        | Meta _ | Evar _ -> Array.length l' <= Projection.npars p + 1 + Array.length l
-        | _ -> false
-      in
       let expand_proj c c' l l' =
         match EConstr.kind sigma c with
-        | Proj (p, _, t) when not (Projection.unfolded p) && needs_expansion p c' l l' ->
-          (try
-             (* TODO: Don't call expansion, instead produce eta expanded prim proj directly *)
-             let c = Retyping.expand_projection curenv sigma p t (Array.to_list l) in
-             let c = whd_const (Projection.constant p) curenv sigma c in
-             destApp sigma c
-           with RetypeError _ -> (* Unification can be called on ill-typed terms, due
-                                     to FO and eta in particular, fail gracefully in that case *)
-             (c, l))
+        | Proj (p, _, _) when Projection.unfolded p -> (c, l)
+        | Proj (p, _, t) ->
+          let (expand, unfold) =
+            match EConstr.kind sigma c' with
+            | Meta _
+            | Evar _ ->
+              (Array.length l' <= Projection.npars p + 1 + Array.length l, true)
+            | Const (c, _) ->
+              (Environ.QConstant.equal env c (Projection.constant p), false)
+            | _ -> (false, false)
+          in
+          if not expand then (c, l) else
+          begin
+            try
+              (* TODO: Don't call expansion, instead produce eta expanded prim proj directly *)
+              let c = Retyping.expand_projection curenv sigma p t (Array.to_list l) in
+              let c = if unfold then whd_const (Projection.constant p) curenv sigma c else c in
+              destApp sigma c
+            with
+            (* Unification can be called on ill-typed terms, due to FO and eta
+               in particular, fail gracefully in that case. *)
+            | RetypeError _ -> (c, l)
+          end
         | _ -> (c, l)
       in
       let f1, l1 = expand_proj f1 f2 l1 l2 in
