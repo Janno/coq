@@ -1733,6 +1733,27 @@ let apply_conversion_problem_heuristic flags env evd with_ho pbty t1 t2 =
                  (position_problem true pbty) ev1 ev2)
       with IllTypedInstance (env,evd,t,u) ->
             UnifFailure (evd,InstanceNotSameType (evk1,env,t,u)))
+
+  | Evar ev1, Proj(p,_,c) when is_evar_allowed flags (fst ev1) && Array.length l1 <= Array.length l2 + Projection.npars p + 1 ->
+    let t2 = Retyping.expand_projection env evd p c (Array.to_list l2) in
+    let appr2 = EConstr.destApp evd t2 in
+    (* On "?n t1 .. tn = u u1 .. u(n+p)", try first-order unification *)
+    (* and otherwise second-order matching *)
+    ise_try evd
+      [(fun evd -> first_order_unification flags env evd (ev1,l1) appr2);
+       (fun evd ->
+          second_order_matching_with_args flags env evd with_ho pbty ev1 l1 t2)]
+
+  | Proj(p,_,c), Evar ev2 when is_evar_allowed flags (fst ev2) && Array.length l2 <= Array.length l1 + Projection.npars p + 1 ->
+    let t1 = Retyping.expand_projection env evd p c (Array.to_list l1) in
+    let appr1 = EConstr.destApp evd t1 in
+    (* On "u u1 .. u(n+p) = ?n t1 .. tn", try first-order unification *)
+    (* and otherwise second-order matching *)
+    ise_try evd
+      [(fun evd -> first_order_unification flags env evd (ev2,l2) appr1);
+       (fun evd ->
+          second_order_matching_with_args flags env evd with_ho pbty ev2 l2 t1)]
+
   | Evar ev1,_ when is_evar_allowed flags (fst ev1) && Array.length l1 <= Array.length l2 ->
       (* On "?n t1 .. tn = u u1 .. u(n+p)", try first-order unification *)
       (* and otherwise second-order matching *)
