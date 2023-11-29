@@ -936,25 +936,10 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
 
          (* Catch the p.c ~= p c' cases *)
          | Proj (p,_,c), Const (p',u) when QConstant.equal env (Projection.constant p) p' ->
-           let res =
-             try Some (destApp evd (Retyping.expand_projection env evd p c []))
-             with Retyping.RetypeError _ -> None
-           in
-             (match res with
-             | Some (f1,args1) ->
-               evar_eqappr_x flags env evd pbty (f1,Stack.append_app args1 sk1)
-                 appr2
-             | None -> UnifFailure (evd,NotSameHead))
+           evar_eqappr_x flags env evd pbty (term1, sk1) (v2, sk2)
 
          | Const (p,u), Proj (p',_,c') when QConstant.equal env p (Projection.constant p') ->
-           let res =
-             try Some (destApp evd (Retyping.expand_projection env evd p' c' []))
-             with Retyping.RetypeError _ -> None
-           in
-             (match res with
-             | Some (f2,args2) ->
-               evar_eqappr_x flags env evd pbty appr1 (f2,Stack.append_app args2 sk2)
-             | None -> UnifFailure (evd,NotSameHead))
+           evar_eqappr_x flags env evd pbty (v1, sk1) (term2, sk2)
 
         | _, _ ->
         let f1 i =
