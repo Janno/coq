@@ -962,17 +962,21 @@ let rec unify_0_with_initial_metas (sigma,ms,es as subst : subst0) conv_at_top e
       let handle_proj h1 h2 l1 l2 =
         let is_const_of p c = Environ.QConstant.equal env c (Projection.constant p) in
         match EConstr.kind sigma h1, EConstr.kind sigma h2 with
-        | Proj (p1, _, _), Proj (p2, _, _) -> (h1, h2, l1, l2)
+        | Proj (p1, _, _), Proj (p2, _, _) -> (false, h1, h2, l1, l2)
         | Proj (p1, _, t), Const (c2, _) when is_const_of p1 c2 ->
           let (h2, l2) =
-            EConstr.destApp sigma (whd_const (Projection.constant p1) curenv sigma (EConstr.mkApp (h2, l2)))
+            let c = whd_const (Projection.constant p1) curenv sigma (EConstr.mkApp (h2, l2)) in
+            let c = whd_beta curenv sigma c in
+            EConstr.decompose_app sigma c
           in
-          (h1, h2, l1, l2)
+          (true, h1, h2, l1, l2)
         | Const (c1, _), Proj (p2, _, t) when is_const_of p2 c1 ->
           let (h1, l1) =
-            EConstr.destApp sigma (whd_const (Projection.constant p2) curenv sigma (EConstr.mkApp (h1, l1)))
+            let c = whd_const (Projection.constant p2) curenv sigma (EConstr.mkApp (h1, l1)) in
+            let c = whd_beta curenv sigma c in
+            EConstr.decompose_app sigma c
           in
-          (h1, h2, l1, l2)
+          (true, h1, h2, l1, l2)
         | Proj (p1, _, t), (Meta _ | Evar _) when Array.length l2 <= Projection.npars p1 + 1 + Array.length l1 ->
           begin
             try
@@ -980,11 +984,11 @@ let rec unify_0_with_initial_metas (sigma,ms,es as subst : subst0) conv_at_top e
               let h1 = Retyping.expand_projection curenv sigma p1 t (Array.to_list l1) in
               let h1 = whd_const (Projection.constant p1) curenv sigma h1 in
               let h1, l1 = destApp sigma h1 in
-              (h1, h2, l1, l2)
+              (true, h1, h2, l1, l2)
             with
             (* Unification can be called on ill-typed terms, due to FO and eta
                in particular, fail gracefully in that case. *)
-            | RetypeError _ -> (h1, h2, l1, l2)
+            | RetypeError _ -> (false, h1, h2, l1, l2)
           end
         | (Meta _ | Evar _), Proj (p2, _, t) when Array.length l1 <= Projection.npars p2 + 1 + Array.length l2 ->
           begin
@@ -993,22 +997,21 @@ let rec unify_0_with_initial_metas (sigma,ms,es as subst : subst0) conv_at_top e
               let h2 = Retyping.expand_projection curenv sigma p2 t (Array.to_list l2) in
               let h2 = whd_const (Projection.constant p2) curenv sigma h2 in
               let h2, l2 = destApp sigma h2 in
-              (h1, h2, l1, l2)
+              (true, h1, h2, l1, l2)
             with
             (* Unification can be called on ill-typed terms, due to FO and eta
                in particular, fail gracefully in that case. *)
-            | RetypeError _ -> (h1, h2, l1, l2)
+            | RetypeError _ -> (false, h1, h2, l1, l2)
           end
-        | _ -> (h1, h2, l1, l2)
+        | _ -> (false, h1, h2, l1, l2)
       in
-      let f1, f2, l1, l2 = handle_proj f1 f2 l1 l2 in
+      let progress, f1, f2, l1, l2 = handle_proj f1 f2 l1 l2 in
       let opta = {opt with at_top = true; with_types = false} in
       let optf = {opt with at_top = true; with_types = true} in
       let (f1,l1,f2,l2) = adjust_app_array_size f1 l1 f2 l2 in
-        if Array.length l1 == 0 then error_cannot_unify (fst curenvnb) sigma (cM,cN)
-        else
-          Array.fold_left2 (unirec_rec curenvnb CONV opta ~nargs:0)
-            (unirec_rec curenvnb CONV optf substn f1 f2 ~nargs:(Array.length l1)) l1 l2
+      if not progress && Array.length l1 == 0 then error_cannot_unify (fst curenvnb) sigma (cM,cN);
+      Array.fold_left2 (unirec_rec curenvnb CONV opta ~nargs:0)
+        (unirec_rec curenvnb CONV optf substn f1 f2 ~nargs:(Array.length l1)) l1 l2
     with ex when precatchable_exception ex ->
     try reduce curenvnb pb {opt with with_types = false} substn cM cN
     with ex when precatchable_exception ex ->
