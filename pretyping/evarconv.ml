@@ -936,10 +936,12 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) flags env evd pbty
 
          (* Catch the p.c ~= p c' cases *)
          | Proj (p,_,c), Const (p',u) when QConstant.equal env (Projection.constant p) p' ->
-           evar_eqappr_x flags env evd pbty (term1, sk1) (v2, sk2)
+           let appr2 = whd_betaiota_deltazeta_for_iota_state TransparentState.empty env evd (v2, sk2) in
+           evar_eqappr_x flags env evd pbty (term1, sk1) appr2
 
          | Const (p,u), Proj (p',_,c') when QConstant.equal env p (Projection.constant p') ->
-           evar_eqappr_x flags env evd pbty (v1, sk1) (term2, sk2)
+           let appr1 = whd_betaiota_deltazeta_for_iota_state TransparentState.empty env evd (v1, sk1) in
+           evar_eqappr_x flags env evd pbty appr1 (term2, sk2)
 
         | _, _ ->
         let f1 i =
