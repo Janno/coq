@@ -1,4 +1,4 @@
-Section S.
+Module S.
   #[local] Set Printing Unfolded Projection As Match.
   #[projections(primitive=yes)]
   Record r (u : unit) := { r_car : Type }.
@@ -14,3 +14,18 @@ Section S.
   Qed.
 End S.
 
+Module T.
+  #[local] Set Printing Unfolded Projection As Match.
+  #[projections(primitive=yes)]
+  Record r (u : unit) := { r_car : Type }.
+
+  Axiom u : unit.
+  Axiom v : forall i : nat, r u.
+
+  Goal forall i, exists P, P (v i) = r_car u (v i).
+  Proof.
+    intros. eexists _.
+    (* Unable to unify "r (v i)" with "?P (v i)". *)
+    refine (eq_refl _).
+  Qed.
+End T.
