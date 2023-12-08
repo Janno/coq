@@ -79,7 +79,12 @@ let unfold_projection env evd ts p r c =
 let eval_flexible_term ts env evd c =
   match EConstr.kind evd c with
   | Const (c, u) ->
-      if TransparentState.is_transparent_constant ts c
+      let transparent =
+        match Structures.PrimitiveProjections.find_opt c with
+        | Some pr -> TransparentState.is_transparent_projection ts pr
+        | None -> TransparentState.is_transparent_constant ts c
+      in
+      if transparent
       then Option.map EConstr.of_constr (constant_opt_value_in env (c, EInstance.kind evd u))
       else None
   | Rel n ->
