@@ -118,7 +118,7 @@ let isEvalRef env sigma c = match EConstr.kind sigma c with
   | _ -> false
 
 let isTransparentEvalRef env sigma ts c = match EConstr.kind sigma c with
-  | Const (cst,_) -> is_evaluable env (EvalConstRef cst) && TransparentState.is_transparent_constant ts cst
+  | Const (cst,_) -> is_evaluable env (EvalConstRef cst) && Structures.PrimitiveProjections.is_transparent_constant ts cst
   | Var id -> is_evaluable env (EvalVarRef id) && TransparentState.is_transparent_variable ts id
   | Rel _ -> true
   | Evar _ -> false (* undefined *)

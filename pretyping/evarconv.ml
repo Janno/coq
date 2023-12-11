@@ -79,12 +79,7 @@ let unfold_projection env evd ts p r c =
 let eval_flexible_term ts env evd c =
   match EConstr.kind evd c with
   | Const (c, u) ->
-      let transparent =
-        match Structures.PrimitiveProjections.find_opt c with
-        | Some pr -> TransparentState.is_transparent_projection ts pr
-        | None -> TransparentState.is_transparent_constant ts c
-      in
-      if transparent
+      if Structures.PrimitiveProjections.is_transparent_constant ts c 
       then Option.map EConstr.of_constr (constant_opt_value_in env (c, EInstance.kind evd u))
       else None
   | Rel n ->
@@ -195,7 +190,7 @@ let occur_rigidly flags env evd (evk,_) t =
     | Lambda (na, t, b) -> aux b
     | LetIn (na, _, _, b) -> aux b
     | Const (c,_) ->
-      if TransparentState.is_transparent_constant flags.open_ts c then Reducible
+      if Structures.PrimitiveProjections.is_transparent_constant flags.open_ts c then Reducible
       else Rigid false
     | Prod (_, b, t) ->
       let b' = aux b and t' = aux t in
