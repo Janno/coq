@@ -717,6 +717,7 @@ let whd_state_gen flags env sigma =
          (lazy (EConstr.to_constr sigma (Stack.zip sigma (x,fst (Stack.strip_app stack)))));
       if RedFlags.red_set flags (RedFlags.fCONST c) then
        let u' = EInstance.kind sigma u in
+       debug_RAKAM Pp.(fun () -> str "const: reducing" ++ Names.Constant.debug_print c);
        match constant_value_in env (c, u') with
        | body ->
          begin
