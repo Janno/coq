@@ -241,4 +241,31 @@ Module ProjOpaque.
   Proof.
     Fail typeclasses eauto with test.
   Abort.
+
+
+  Class T (p : Prop) : Prop := {}.
+
+  Axiom prod : Prop -> Prop -> Prop.
+  Axiom T_prod : forall p1 p2, T p1 -> T p2 -> T (prod p1 p2).
+  Axiom T_True : T True.
+
+  Class F (f : unit -> Prop) : Prop := { F_T :: forall u, T (f u) }.
+
+  #[projections(primitive)]
+    Record AbsPred (useless : unit)
+    : Type :=
+    Build_AbsPred
+      { vpte : unit -> Prop;
+        vpte_frac : F (vpte);
+      }.
+  Hint Opaque vpte : test.
+  Hint Resolve vpte_frac F_T T_prod T_True : test.
+
+  (* Notation constant := (@vpte tt). *)
+
+  Goal forall (a : AbsPred tt) q, T (prod (vpte _ a q) (True)).
+  Proof.
+    intros a.
+    typeclasses eauto with test.
+  Qed.
 End ProjOpaque.
