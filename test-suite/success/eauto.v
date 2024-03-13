@@ -221,3 +221,24 @@ not_in_list ((p, q) :: l) n -> not_in_list l n.
   intros.
   eauto with essai.
 Qed.
+
+(* Testing that projections can be made hint opaque. *)
+Module ProjOpaque.
+  #[projections(primitive)]
+  Record bla := { x : unit }.
+
+  Definition bli := {| x := tt |}.
+
+  Class C (p : unit) := {}.
+  (* Definition B1 : bla 1 := {|x := tt |}. *)
+  Definition I  : C (x bli) := Build_C _.
+
+  Create HintDb test discriminated.
+  Hint Resolve I : test.
+  Hint Opaque x : test.
+
+  Goal C tt.
+  Proof.
+    Fail typeclasses eauto with test.
+  Abort.
+End ProjOpaque.
