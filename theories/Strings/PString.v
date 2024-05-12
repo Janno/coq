@@ -69,12 +69,12 @@ Lemma string_lt_spec (s1 s2 : string) :
   string_lt s1 s2 <->
     exists i,
       (i <=? length s1 = true)%uint63 /\
-        (i <=? length s2 = true)%uint63 /\
-        (forall j, (j <? i = true)%uint63 -> get s1 j = get s2 j) /\
-        ((i = length s1 /\ (i <? length s2 = true)%uint63) \/
-           (i <? length s1 = true /\
-              i <? length s2 = true /\
-              get s1 i <? get s2 i = true)%uint63).
+      (i <=? length s2 = true)%uint63 /\
+      (forall j, (j <? i = true)%uint63 -> get s1 j = get s2 j) /\
+      ((i = length s1 /\ (i <? length s2 = true)%uint63) \/
+       (i <? length s1 = true /\
+        i <? length s2 = true /\
+        get s1 i <? get s2 i = true)%uint63).
 Proof.
   unfold string_lt. rewrite compare_spec.
   setoid_rewrite Uint63.compare_def_spec; unfold compare_def.
@@ -90,6 +90,9 @@ Proof.
     + repeat case_if; try reflexivity; lia.
     + repeat case_if; try reflexivity; lia.
 Qed.
+
+Require Import Coq.micromega.Lia.
+Require Import Coq.micromega.ZifyUint63.
 
 Lemma compare_trans (c : comparison) (s1 s2 s3 : string) :
   compare s1 s2 = c -> compare s2 s3 = c -> compare s1 s3 = c.
@@ -168,6 +171,192 @@ Proof.
     rewrite Hc1 in H3; inversion H3.
   - pose proof (compare_trans _ _ _ _ Hc1 Hc2) as Htrans.
     rewrite Htrans in H3; inversion H3.
+Qed.
+
+(** A Gallina implementation of [compare] to serve as a spec. *)
+Definition string_cmp (s1 s2 : string) : comparison :=
+  let l1 := length s1 in
+  let l2 := length s2 in
+  (fix go n1 n2 i {struct n1} : comparison :=
+     match n1, n2 with
+     | 0, 0 => Eq
+     | 0, _ => Lt
+     | _, 0 => Gt
+     | S n1, S n2 =>
+       match (get s1 i ?= get s2 i)%uint63 with
+       | Eq => go n1 n2 (i + 1)%uint63
+       | _ as c => c
+       end
+     end%nat) (BinInt.Z.to_nat (Uint63.to_Z l1)) (BinInt.Z.to_nat (Uint63.to_Z l2)) 0%uint63.
+
+From Coq Require Import Lia ZifyUint63 BinInt.
+
+Lemma string_cmp_eq s1 s2 : string_cmp s1 s2 = Eq <-> s1 = s2.
+Proof.
+  unfold string_cmp.
+  assert (Hl1 : (φ (length s1) >= 0)%Z%uint63) by lia. (* Why does this work? *)
+  assert (Hl2 : (φ (length s2) >= 0)%Z%uint63) by lia. (* Why does this work? *)
+  remember (Z.to_nat (φ (length s1))%uint63) as n1 eqn:Eqn1.
+  remember (Z.to_nat (φ (length s2))%uint63) as n2 eqn:Eqn2.
+  enough (0%uint63 = Uint63.of_Z 0%Z) as ->; [|now lia].
+  assert (Hi1 : (Z.of_nat n1 + 0 = (φ (length s1))%uint63)%Z) by lia.
+  assert (Hi2 : (Z.of_nat n2 + 0 = (φ (length s2))%uint63)%Z) by lia.
+  (* invariant *)
+  assert (Inv : (forall j, (to_Z j < 0)%Z -> get s1 j = get s2 j)%uint63) by lia.
+  revert Hi1 Hi2 Inv.
+  generalize 0%Z at 1 2 3 4.
+
+  clear Eqn1 Eqn2.
+
+  revert n2.
+  induction n1 as [|n1 IHn1]; intros [|n2] i Hi1 Hi2 Inv.
+  2,3: (split; [discriminate|intros; subst]); lia.
+  1: {
+    split; [|now auto]. intros _.
+    apply string_eq_spec.
+    apply string_eq_ext.
+    split. lia. intros. apply Inv. lia.
+  }
+
+  destruct((get s1 (of_Z i)) ?= (get s2 (of_Z i)))%uint63 eqn: Hcmp.
+  - enough (of_Z i + 1 = of_Z (i + 1))%uint63 as ->; [|now lia].
+    apply IHn1; [lia..|].
+    rewrite Uint63.compare_spec in Hcmp.
+    apply Z.compare_eq_iff in Hcmp.
+    intros j Hj. specialize (Inv j).
+    destruct (Z.lt_trichotomy (φ j)%uint63 (i)) as [?|[?|?]]; subst.
+    + lia.
+    + rewrite of_to_Z in Hcmp. lia.
+    + lia.
+  - split; [discriminate|intros; subst]; exfalso.
+    now rewrite Uint63.compare_spec, Z.compare_refl in Hcmp.
+  - split; [discriminate|intros; subst]; exfalso.
+    now rewrite Uint63.compare_spec, Z.compare_refl in Hcmp.
+Qed.
+
+Lemma string_cmp_lt s1 s2 :
+    string_cmp s1 s2 = Lt <->
+    exists i,
+      (i <=? length s1 = true)%uint63 /\
+      (i <=? length s2 = true)%uint63 /\
+      (forall j, (j <? i = true)%uint63 -> get s1 j = get s2 j) /\
+      ((i = length s1 /\ (i <? length s2 = true)%uint63) \/
+       (i <? length s1 = true /\
+        i <? length s2 = true /\
+        get s1 i <? get s2 i = true)%uint63).
+Proof.
+  unfold string_cmp.
+  assert (Hl1 : (φ (length s1) >= 0)%Z%uint63) by lia. (* Why does this work? *)
+  assert (Hl2 : (φ (length s2) >= 0)%Z%uint63) by lia. (* Why does this work? *)
+  remember (Z.to_nat (φ (length s1))%uint63) as n1 eqn:Eqn1.
+  remember (Z.to_nat (φ (length s2))%uint63) as n2 eqn:Eqn2.
+  enough (0%uint63 = Uint63.of_Z 0%Z) as ->; [|now lia].
+  assert (H0i : (0 <= 0%Z)%Z) by lia.
+  assert (Hi1 : (Z.of_nat n1 + 0 = (φ (length s1))%uint63)%Z) by lia.
+  assert (Hi2 : (Z.of_nat n2 + 0 = (φ (length s2))%uint63)%Z) by lia.
+  (* invariant *)
+  assert (Inv : (forall j, (to_Z j < 0)%Z -> get s1 j = get s2 j)%uint63) by lia.
+  revert H0i Hi1 Hi2 Inv.
+  generalize 0%Z at 2 3 4 5 6.
+  clear Eqn1 Eqn2.
+
+  revert n2.
+  induction n1 as [|n1 IHn1]; intros [|n2] i H0i Hi1 Hi2 Inv.
+  - split; [discriminate|intros; subst]; exfalso.
+    destruct H as (k & Hkl1 & Hkl2 & Hk & [(Hil1 & Hl1l2)|(Hkl1' & Hkl2' & Hkget)]); [lia|].
+    enough (length s2 = length s1) as Hl; [rewrite Hl in *|lia].
+    clear Hkl2 Hkl2' Hi2.
+    apply (Bool.reflect_iff _ _ (ltbP _ _)) in Hkget.
+    apply (Bool.reflect_iff _ _ (ltbP _ _)) in Hkl1'.
+    rewrite Inv in Hkget; lia.
+  - split; [intros _|now auto].
+    exists (of_Z i).
+    repeat (split; [lia|]).
+    split.
+    + intros. apply Inv. lia.
+    + left. lia.
+  - split; [discriminate|intros; subst]; exfalso.
+    destruct H as (k & Hkl1 & Hkl2 & Hk & [(Hil1 & Hl1l2)|(Hkl1' & Hkl2' & Hkget)]); [lia|].
+    apply (Bool.reflect_iff _ _ (ltbP _ _)) in Hkget.
+    apply (Bool.reflect_iff _ _ (ltbP _ _)) in Hkl1'.
+    apply (Bool.reflect_iff _ _ (ltbP _ _)) in Hkl2'.
+    rewrite Inv in Hkget; lia.
+  - destruct((get s1 (of_Z i)) ?= (get s2 (of_Z i)))%uint63 eqn:Hcmp.
+    + enough (of_Z i + 1 = of_Z (i + 1))%uint63 as ->; [|now lia].
+      rewrite Uint63.compare_spec in Hcmp.
+      apply Z.compare_eq_iff, to_Z_inj in Hcmp.
+      apply IHn1; [lia..|]; clear IHn1.
+      intros.
+      destruct (Z.lt_trichotomy (φ j)%uint63 (i)) as [?|[?|?]]; subst.
+      * apply Inv. lia.
+      * rewrite of_to_Z in Hcmp. exact Hcmp.
+      * lia.
+    + clear IHn1.
+      split; [intros _|now auto].
+      exists (of_Z i).
+      repeat (split; [lia|]).
+      split.
+      * intros. apply Inv. lia.
+      * right.
+        repeat (split; [lia|..]).
+        apply (Bool.reflect_iff _ _ (ltbP _ _)).
+        now rewrite Uint63.compare_spec in Hcmp.
+    +  split; [discriminate|intros; subst]; exfalso.
+       destruct H as (k & Hkl1 & Hkl2 & Hk & [(Hil1 & Hl1l2)|(Hkl1' & Hkl2' & Hkget)]); [|].
+       * subst.
+         rewrite Hk in Hcmp; [|lia].
+         now rewrite Uint63.compare_spec, Z.compare_refl in Hcmp.
+       * destruct (Z.lt_trichotomy (φ k)%uint63 (i)) as [?|[?|?]]; subst.
+         { specialize (Inv k). lia. }
+         { rewrite Uint63.compare_spec in Hcmp.
+           apply (Bool.reflect_iff _ _ (ltbP _ _)) in Hkget.
+           apply Z.compare_gt_iff in Hcmp.
+           rewrite of_to_Z in Hcmp. (* Ugh! *)
+           lia. }
+         { specialize (Hk (of_Z i)).
+           rewrite Hk, Uint63.compare_spec, Z.compare_refl in Hcmp; [|lia].
+           discriminate. }
+Qed.
+
+Lemma string_cmp_swap s1 s2 : string_cmp s1 s2 = Lt <-> string_cmp s2 s1 = Gt.
+Proof.
+  unfold string_cmp.
+  assert (Hl1 : (φ (length s1) >= 0)%Z%uint63) by lia. (* Why does this work? *)
+  assert (Hl2 : (φ (length s2) >= 0)%Z%uint63) by lia. (* Why does this work? *)
+  remember (Z.to_nat (φ (length s1))%uint63) as n1 eqn:Eqn1.
+  remember (Z.to_nat (φ (length s2))%uint63) as n2 eqn:Eqn2.
+  enough (0%uint63 = Uint63.of_Z 0%Z) as ->; [|now lia].
+  assert (Hi1 : (Z.of_nat n1 + 0 = (φ (length s1))%uint63)%Z) by lia.
+  assert (Hi2 : (Z.of_nat n2 + 0 = (φ (length s2))%uint63)%Z) by lia.
+  revert Hi1 Hi2.
+  generalize 0%Z at 1 2 3 4.
+  clear Eqn1 Eqn2.
+
+  revert n2.
+  induction n1 as [|n1 IHn1]; intros [|n2] i Hi1 Hi2.
+  1-3: split; congruence.
+  destruct((get s1 (of_Z i)) ?= (get s2 (of_Z i)))%uint63 eqn:Hcmp;
+  rewrite Uint63.compare_spec in Hcmp.
+  2,3: apply Zcompare.Zcompare_Gt_Lt_antisym in Hcmp.
+  2,3: now rewrite <-Uint63.compare_spec in Hcmp; rewrite Hcmp.
+
+  apply Z.compare_eq, to_Z_inj in Hcmp.
+  rewrite Hcmp.
+  rewrite Uint63.compare_spec, Z.compare_refl.
+  enough (of_Z i + 1 = of_Z (i + 1))%uint63 as ->; [|now lia].
+  apply IHn1; lia.
+Qed.
+
+Theorem string_cmp_agree s1 s2 : string_cmp s1 s2 = compare s1 s2.
+Proof.
+  destruct (compare s1 s2) eqn:H.
+  - now rewrite (string_eq_correct s1 s2 H), string_cmp_eq.
+  - apply string_lt_spec in H.
+    apply string_cmp_lt.
+    assumption.
+  - apply string_lt_gt, string_lt_spec in H.
+    apply string_cmp_swap, string_cmp_lt.
+    assumption.
 Qed.
 
 (** * Conversion to / from lists *)
@@ -254,9 +443,7 @@ Proof.
       rewrite Z.mod_small in Hr12; [|lia].
       rewrite Z.mod_small in Hr22; [|lia].
       rewrite Z.mod_small in Hr31; [|lia].
-      rewrite !Z.mod_small in Hr32; try lia.
-      2: { rewrite Z.mod_small; [|lia]. lia. }
-      rewrite Z.mod_small; [|lia]. lia. }
+      rewrite !Z.mod_small in Hr32; try lia. }
     rewrite !sub_get_spec; try assumption. f_equal. ring.
 Qed.
 
@@ -391,6 +578,7 @@ Lemma to_of_list (l : list char63) :
   to_list (of_list l) = l.
 Proof.
 Admitted.
+
 
 Require Import OrderedType.
 
