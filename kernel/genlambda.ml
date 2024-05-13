@@ -41,6 +41,7 @@ type 'v lambda =
   (* inductive name, constructor tag, arguments *)
 | Luint         of Uint63.t
 | Lfloat        of Float64.t
+| Lstring       of String.t
 | Lval          of 'v
 | Lsort         of Sorts.t
 | Lind          of pinductive
@@ -161,6 +162,7 @@ let rec pp_lam lam =
        str")")
   | Luint i -> str (Uint63.to_string i)
   | Lfloat f -> str (Float64.to_string f)
+  | Lstring s -> str (Printf.sprintf "%S" s)
   | Lval _ -> str "values"
   | Lsort s -> pp_sort s
   | Lind ((mind,i), _) -> MutInd.print mind ++ str"#" ++ int i
@@ -216,7 +218,7 @@ let decompose_Llam_Llet lam =
 let map_lam_with_binders g f n lam =
   match lam with
   | Lrel _ | Lvar _  | Lconst _ | Lval _ | Lsort _ | Lind _ | Lint _ | Luint _
-  | Lfloat _ -> lam
+  | Lfloat _ | Lstring _ -> lam
   | Levar (evk, args) ->
     let args' = Array.Smart.map (f n) args in
     if args == args' then lam else Levar (evk, args')
@@ -398,7 +400,7 @@ let rec occurrence k kind lam =
       if kind then false else raise Not_found
     else kind
   | Lvar _  | Lconst _  | Lval _ | Lsort _ | Lind _ | Lint _ | Luint _
-  | Lfloat _ -> kind
+  | Lfloat _ | Lstring _ -> kind
   | Levar (_, args) ->
     occurrence_args k kind args
   | Lprod(dom, codom) ->
@@ -689,6 +691,8 @@ let rec lambda_of_constr cache env sigma c =
   | Int i -> Luint i
 
   | Float f -> Lfloat f
+
+  | String s -> Lstring s
 
   | Array (_u, t, def, _ty) ->
     let def = lambda_of_constr cache env sigma def in

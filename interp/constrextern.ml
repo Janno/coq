@@ -1118,6 +1118,11 @@ let rec extern inctx scopes vars r =
 
   | GFloat f -> extern_float f (snd scopes)
 
+  | GString s ->
+     extern_prim_token_delimiter_if_required
+       (String s)
+       "pstring" "pstring_scope" (snd scopes)
+
   | GArray(u,t,def,ty) ->
     CArray(extern_instance (snd vars) u,Array.map (extern inctx scopes vars) t, extern inctx scopes vars def, extern_typ scopes vars ty)
 
@@ -1550,6 +1555,7 @@ let rec glob_of_pat
   | PSort (Sorts.InType | Sorts.InQSort) -> GSort (UAnonymous {rigid=UnivRigid})
   | PInt i -> GInt i
   | PFloat f -> GFloat f
+  | PString s -> GString s
   | PArray(t,def,ty) ->
     let glob_of = glob_of_pat avoid env sigma in
     GArray (None, Array.map glob_of t, glob_of def, glob_of ty)

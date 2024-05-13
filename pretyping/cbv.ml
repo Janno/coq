@@ -275,6 +275,14 @@ module VNativeEntries =
         | _ -> raise Primred.NativeDestKO)
       | _ -> raise Primred.NativeDestKO
 
+    let get_string () e =
+      match e with
+      | VAL(_, cf) ->
+        (match kind cf with
+        | String s -> s
+        | _ -> raise Primred.NativeDestKO)
+      | _ -> raise Primred.NativeDestKO
+
     let get_parray () e =
       match e with
       | ARRAY(_u,t,_ty) -> t
@@ -283,6 +291,8 @@ module VNativeEntries =
     let mkInt env i = VAL(0, mkInt i)
 
     let mkFloat env f = VAL(0, mkFloat f)
+
+    let mkString env s = VAL(0, mkString s)
 
     let mkBool env b =
       let (ct,cf) = get_bool_constructors env in
@@ -580,7 +590,7 @@ let rec norm_head info env t stack =
     (ARRAY (u,t,ty), stack)
 
   (* neutral cases *)
-  | (Sort _ | Meta _ | Ind _ | Int _ | Float _) -> (VAL(0, t), stack)
+  | (Sort _ | Meta _ | Ind _ | Int _ | Float _ | String _) -> (VAL(0, t), stack)
   | Prod (na,t,u) -> (PROD(na,t,u,env), stack)
 
 and norm_head_ref k info env stack normt t =

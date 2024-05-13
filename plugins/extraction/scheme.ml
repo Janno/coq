@@ -133,6 +133,10 @@ let rec pp_expr env args =
       paren (str "Prelude.error \"EXTRACTION OF UINT NOT IMPLEMENTED\"")
     | MLfloat _ ->
       paren (str "Prelude.error \"EXTRACTION OF FLOAT NOT IMPLEMENTED\"")
+    | MLchar _ ->
+      paren (str "Prelude.error \"EXTRACTION OF CHAR NOT IMPLEMENTED\"")
+    | MLstring _ ->
+      paren (str "Prelude.error \"EXTRACTION OF STRING NOT IMPLEMENTED\"")
     | MLparray _ ->
             paren (str "Prelude.error \"EXTRACTION OF PARRAY NOT IMPLEMENTED\"")
 

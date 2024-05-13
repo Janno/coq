@@ -155,6 +155,7 @@ let opcodes =
     "CHECKCAMLCALL2_1", 2;
     "CHECKCAMLCALL1", 2;
     "CHECKCAMLCALL2", 2;
+    "CHECKCAMLCALL3", 2;
     "CHECKCAMLCALL3_1", 2;
     "STOP", 0
   |]

@@ -408,6 +408,8 @@ type target_kind =
 type string_target_kind =
   | ListByte
   | Byte
+  | PString
+  | IntCharCode
 
 type option_kind = Option | Direct
 type 'target conversion_kind = 'target * option_kind
@@ -448,6 +450,7 @@ type 'a token_kind =
 | TConstruct of constructor * 'a list
 | TInt of Uint63.t
 | TFloat of Float64.t
+| TString of String.t
 | TArray of 'a array * 'a * 'a
 | TOther
 
@@ -472,6 +475,7 @@ let kind c =
   | Construct (c, _) -> TConstruct (c, args)
   | Int i -> TInt i
   | Float f -> TFloat f
+  | String s -> TString s
   | Array (_, t, u, v) -> TArray (t, u, v)
   | Rel _ | Meta _ | Evar _ | Cast _ | Prod _ | Lambda _ | LetIn _ | App _
   | Proj _ | Case _ | Fix _ | CoFix _ -> TOther
@@ -676,6 +680,7 @@ let rec glob_of_token token_kind ?loc env sigma c = match TokenValue.kind c with
     mkGApp ?loc ce cel
   | TInt i -> DAst.make ?loc (Glob_term.GInt i)
   | TFloat f -> DAst.make ?loc (Glob_term.GFloat f)
+  | TString s -> DAst.make ?loc (Glob_term.GString s)
   | TArray (t,def,ty) ->
     let def' = glob_of_token token_kind ?loc env sigma def
     and t' = Array.map (glob_of_token token_kind ?loc env sigma) t
@@ -1112,19 +1117,31 @@ let locate_byte () = unsafe_locate_ind (q_byte ())
 let coqbyte_of_char_code esig byte c =
   mkConstruct esig (byte, 1 + c)
 
+let char_of_string ?loc s =
+  let len = String.length s in
+  if Int.equal len 1 then s.[0] else
+  let n =
+    if Int.equal len 3 && is_digit s.[0] && is_digit s.[1] && is_digit s.[2]
+    then int_of_string s else 256
+  in
+  if n < 256 then Char.chr n else
+  user_err ?loc (str "Expects a single character or a three-digit ASCII code.")
+
 let coqbyte_of_string ?loc esig byte s =
-  let p =
-    if Int.equal (String.length s) 1 then int_of_char s.[0]
-    else
-      let n =
-        if Int.equal (String.length s) 3 && is_digit s.[0] && is_digit s.[1] && is_digit s.[2]
-        then int_of_string s else 256 in
-      if n < 256 then n else
-       user_err ?loc
-         (str "Expects a single character or a three-digit ASCII code.") in
+  let p = Char.code (char_of_string ?loc s) in
   coqbyte_of_char_code esig byte p
 
 let coqbyte_of_char esig byte c = coqbyte_of_char_code esig byte (Char.code c)
+
+let pstring_of_string ?loc s =
+  if String.length s > Pstring.max_length_int then
+    user_err ?loc (str "String literal would be too large on a 32-bits system.")
+  else
+    Constr.mkString s
+
+let intcharcode_of_string ?loc s =
+  let c = char_of_string ?loc s in
+  Constr.mkInt (Uint63.of_int (Char.code c))
 
 let make_ascii_string n =
   if n>=32 && n<=126 then String.make 1 (char_of_int n)
@@ -1135,6 +1152,17 @@ let char_code_of_coqbyte c = match TokenValue.kind c with
 | _ -> raise NotAValidPrimToken
 
 let string_of_coqbyte c = make_ascii_string (char_code_of_coqbyte c)
+
+let string_of_pstring c =
+  match TokenValue.kind c with
+  | TString s -> s
+  | _ -> raise NotAValidPrimToken
+
+let string_of_intcharcode c =
+  match TokenValue.kind c with
+  | TInt i when Uint63.lt i (Uint63.of_int 256) ->
+      String.make 1 (Char.chr (Uint63.to_int_min i 256))
+  | _ -> raise NotAValidPrimToken
 
 let coqlist_byte_of_string esig byte_ty list_ty str =
   let cbyte = mkInd esig byte_ty in
@@ -1171,6 +1199,8 @@ let interp o ?loc n =
   let c = match fst o.to_kind with
     | ListByte -> coqlist_byte_of_string esig byte_ty list_ty n
     | Byte -> coqbyte_of_string ?loc esig byte_ty n
+    | PString -> pstring_of_string ?loc n
+    | IntCharCode -> intcharcode_of_string ?loc n
   in
   let sigma = !sigma in
   let sigma,to_ty = Evd.fresh_global env sigma o.to_ty in
@@ -1185,6 +1215,8 @@ let uninterp o n =
     begin function
       | (ListByte, c) -> string_of_coqlist_byte c
       | (Byte, c) -> string_of_coqbyte c
+      | (PString, c) -> string_of_pstring c
+      | (IntCharCode, c) -> string_of_intcharcode c
     end o n
 end
 
