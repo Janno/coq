@@ -20,18 +20,11 @@ sig
     | FProj of Names.Projection.t * Sorts.relevance * fconstr
     | FFix of Constr.fixpoint * usubs
     | FCoFix of Constr.cofixpoint * usubs
-    | FCaseT of Constr.case_info * UVars.Instance.t * Constr.constr array *
-        Constr.case_return * fconstr * Constr.case_branch array * usubs
-    | FCaseInvert of Constr.case_info * UVars.Instance.t *
-        Constr.constr array * Constr.case_return * finvert * fconstr *
-        Constr.case_branch array * usubs
-    | FLambda of int *
-        (Names.Name.t Constr.binder_annot * Constr.constr) list *
-        Constr.constr * usubs
-    | FProd of Names.Name.t Constr.binder_annot * fconstr * Constr.constr *
-        usubs
-    | FLetIn of Names.Name.t Constr.binder_annot * fconstr * fconstr *
-        Constr.constr * usubs
+    | FCaseT of Constr.case_info * UVars.Instance.t * Constr.constr array * Constr.case_return * fconstr * Constr.case_branch array * usubs
+    | FCaseInvert of Constr.case_info * UVars.Instance.t * Constr.constr array * Constr.case_return * finvert * fconstr * Constr.case_branch array * usubs
+    | FLambda of int * (Names.Name.t Constr.binder_annot * Constr.constr) list * Constr.constr * usubs
+    | FProd of Names.Name.t Constr.binder_annot * fconstr * Constr.constr * usubs
+    | FLetIn of Names.Name.t Constr.binder_annot * fconstr * fconstr * Constr.constr * usubs
     | FEvar of Evar.t * Constr.constr list * usubs * evar_repack
     | FInt of Uint63.t
     | FFloat of Float64.t
@@ -2286,6 +2279,8 @@ let wh reds env sigma c =
 
   let rec go refs ((fc, stack) : CClosure.fconstr * _ zapp CClosure.stack_member list) =
     let ft = CClosure.fterm_of fc in
+    dbg Pp.(fun () -> str "tag:" ++ int (Obj.tag (Obj.repr ft)));
+    dbg (fun () -> Constr.debug_print (CClosure.term_of_fconstr fc));
     match ft with
     (* Impossible cases *)
     | CClosure.FApp (_, _)
@@ -2302,6 +2297,7 @@ let wh reds env sigma c =
       -> assert false
     (* Interesting cases *)
     | CClosure.FConstruct (c, usubs) ->
+      dbg (fun () -> Printer.pr_constructor env c);
       begin
         let open CClosure in
         match [@ocaml.warning "-4"] strip_update_shift_app fc stack with
@@ -2337,21 +2333,29 @@ let wh reds env sigma c =
     | CClosure.FCLOS (case, usubs) when Constr.isCase case ->
       assert false
     | CClosure.FFlex (Names.ConstKey (cnst, _ as cref)) when (Names.Cpred.mem cnst ts.tr_cst) ->
-      dbg (fun () -> Printer.pr_constant env cnst);
       begin
         let open ReductionBehaviour in
         match get cnst with
-        | None -> unfold cref refs (fc, stack)
-        | Some NeverUnfold -> finish (fc, stack)
+        | None ->
+          dbg Pp.(fun () -> Printer.pr_constant env cnst ++ str ": unfolding immediately");
+          unfold cref refs (fc, stack)
+        | Some NeverUnfold ->
+          dbg Pp.(fun () -> Printer.pr_constant env cnst ++ str ": never unfolding");
+          finish (fc, stack)
         | Some (UnfoldWhen {recargs;nargs}) ->
+          dbg Pp.(fun () -> Printer.pr_constant env cnst ++ str ": unfolding after " ++ prlist_with_sep (fun () -> str ", ") int recargs);
           let enough_args =
             match nargs with
             | None -> true
             | Some nargs -> nargs < (CClosure.stack_args_size stack)
           in
-          if not enough_args then finish (fc, stack) else
+          if not enough_args then
+            let () = dbg Pp.(fun () -> str "not enough args") in
+            finish (fc, stack)
+          else
           def cref recargs refs (fc, stack)
         | Some UnfoldWhenNoMatch{recargs;nargs} ->
+          dbg Pp.(fun () -> Printer.pr_constant env cnst ++ str ": unfolding after " ++ prlist_with_sep (fun () -> str ", ") int recargs ++ str "; NoMatch");
           assert false
       end
     | CClosure.FProj (proj, _, _) when (Names.PRpred.mem (Names.Projection.repr proj) ts.tr_prj) ->
@@ -2418,7 +2422,8 @@ let wh reds env sigma c =
         match CClosure.get_nth_arg fc recarg stack with
         | (Some(pars,arg),stack) ->
           let stack = CClosure.Zext (ZApp (cref, fc, recargs),pars) :: stack in
-          go refs (arg, stack)
+          let r = red arg stack in
+          go refs r
         | (None, stack) ->
           assert false
     end
