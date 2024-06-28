@@ -94,6 +94,15 @@ val usubs_lift : usubs -> usubs
 val usubs_liftn : int -> usubs -> usubs
 val usubs_cons : fconstr -> usubs -> usubs
 
+val strip_update_shift_app :
+  fconstr -> stack_member list -> int * stack_member list * stack_member list
+
+val get_nth_arg :
+  fconstr ->
+  int ->
+  stack_member list -> (stack_member list * fconstr) option * stack_member list
+
+
 (** identity if the first instance is empty *)
 val usubst_instance : 'a UVars.puniverses -> UVars.Instance.t -> UVars.Instance.t
 

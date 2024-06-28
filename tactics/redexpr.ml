@@ -237,6 +237,7 @@ let rec eval_red_expr env = function
   Simpl (f, o)
 | Cbv f -> Cbv (make_flag env f)
 | Cbn f -> Cbn (make_flag env f)
+| ReRed f -> ReRed (make_flag env f)
 | Lazy f -> Lazy (make_flag env f)
 | ExtraRedExpr s ->
   begin match String.Map.find s !red_expr_tab with
@@ -265,6 +266,9 @@ let reduction_of_red_expr_val = function
   | Cbn (w,f) ->
     let cbn = match w with Norm -> Cbn.norm_cbn | Head -> Cbn.whd_cbn in
      (e_red (cbn f), DEFAULTcast)
+  | ReRed(w,f) ->
+    let rered = ReRed.rered w in
+    (e_red (rered f),DEFAULTcast)
   | Lazy (w,f) ->
     let redf = match w with Norm -> clos_norm_flags | Head -> clos_whd_flags in
     (e_red (redf f),DEFAULTcast)
@@ -340,7 +344,7 @@ let bind_red_expr_occurrences occs nbcl redexp =
           error_illegal_clause ()
         else
           CbvNative (Some (occs,c))
-    | Red | Hnf | Cbv _ | Lazy _ | Cbn _
+    | Red | Hnf | Cbv _ | Lazy _ | Cbn _ | ReRed _
     | ExtraRedExpr _ | Fold _ | Simpl (_,None) | CbvVm None | CbvNative None ->
         error_at_in_occurrences_not_supported ()
     | Unfold [] | Pattern [] ->
@@ -488,6 +492,7 @@ module Intern = struct
     | Fold l -> Fold (List.map ist.intern_constr l)
     | Cbv f -> Cbv (intern_flag ist f)
     | Cbn f -> Cbn (intern_flag ist f)
+    | ReRed f -> ReRed (intern_flag ist f)
     | Lazy f -> Lazy (intern_flag ist f)
     | Pattern l -> Pattern (List.map (intern_constr_with_occurrences ist) l)
     | Simpl (f,o) ->
@@ -562,6 +567,7 @@ module Interp = struct
       sigma , Fold (List.flatten l_interp)
     | Cbv f -> sigma , Cbv (interp_flag ist env sigma f)
     | Cbn f -> sigma , Cbn (interp_flag ist env sigma f)
+    | ReRed f -> sigma , ReRed (interp_flag ist env sigma f)
     | Lazy f -> sigma , Lazy (interp_flag ist env sigma f)
     | Pattern l ->
       let (sigma,l_interp) =
