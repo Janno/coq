@@ -2444,7 +2444,8 @@ let wh ~only_head reds env sigma c =
           dbg Pp.(fun () -> str "finish: found ZUndoOnMatchFix");
           let undo () =
             dbg Pp.(fun () -> str "undo!");
-            fin (List.rev_append par acc) (fc', stack)
+            let fc' = zip fc' par in
+            fin acc (fc', stack)
           in
           begin
             match CClosure.fterm_of fc with
