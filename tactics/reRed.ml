@@ -1,3 +1,5 @@
+open Util
+
 module
   CClosure :
 sig
@@ -2180,14 +2182,37 @@ let push_relevances :
 (* [only_head] decides if we want to undo work when it was not strictly necessary for weak head reduction. *)
 let wh ~only_head infos fc stack =
 
-  let find_fix refs fix =
+  let find_fix refs (((recargs, i), (names, types, bodies)) : Constr.fixpoint) =
     (* try to find a matching fixpoint in [refs] *)
-    let fn ((_, _) as fix', _) =
-      fix = fix'
-      (* Array.for_all2 Int.equal recargs recargs' && *)
-      (* i = i' *)
+    let fn (((recargs', i'), (names', types', bodies')), _) =
+      let found =
+        recargs = recargs' &&
+        names' = names &&
+        (Array.equal Constr.equal types' types) &&
+        (Array.equal Constr.equal bodies' bodies)
+      in
+      found
     in
-    List.find_opt fn refs
+    match List.find_opt fn refs with
+    | Some ((((_, i'), _)), cu) when i = i' ->
+      Some cu
+    | Some ((((_, i'), (names', _, _))), (cst, univs)) ->
+      (* We guess the name of the fixpoint *)
+      let id' =
+        match names'.(i').Context.binder_name with
+        | Names.Name.Name n -> n
+        | _ -> assert false
+      in
+      let ker = Names.Constant.user cst in
+      let m = Names.KerName.modpath ker in
+      let dir = Nametab.dirpath_of_module m in
+      let qualid = Libnames.make_qualid dir id' in
+      begin
+        match Nametab.locate_constant qualid with
+        | cst -> Some (cst, univs)
+        | exception Not_found -> None
+      end
+    | None -> None
   in
 
   let ts = RedFlags.red_transparent infos.i_reds in
@@ -2226,7 +2251,7 @@ let wh ~only_head infos fc stack =
           let (fix, e) = match fterm_of fx with | FFix (fix, e) -> (fix, e) | _ -> assert false in
           let ofix =
             match find_fix refs fix with
-            | Some (_, (cnst, univs)) when Esubst.is_subs_id (fst e) ->
+            | Some ((cnst, univs)) when Esubst.is_subs_id (fst e) ->
               Some (FFlex (Names.ConstKey (cnst, univs)))
             | _ -> None
           in
@@ -2253,7 +2278,7 @@ let wh ~only_head infos fc stack =
       begin
         let (_,_) as fix = Constr.destFix fix in
         match find_fix refs fix with
-        | Some (_, (cnst, univs)) when Esubst.is_subs_id (fst usubs) ->
+        | Some (cnst, univs) when Esubst.is_subs_id (fst usubs) ->
           dbg Pp.(fun () -> str "refolding: " ++ Printer.pr_constant infos.i_env cnst);
           let univs = CClosure.usubst_instance usubs univs in
           let fc = CClosure.mk_atom (Constr.mkConstU (cnst, univs)) in
@@ -2427,7 +2452,6 @@ let wh_val_constr ~only_head infos e c =
   let fc = CClosure.(mk_clos e c) in
   wh ~only_head infos fc []
 
-open Util
 open Esubst
 open Constr
 open Vars
