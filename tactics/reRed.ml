@@ -390,16 +390,7 @@ sig
     clos_infos ->
     clos_tab -> FredNative.elem -> 'a pre_stack_member list -> fconstr
   val is_val : fconstr -> bool
-  val kl : clos_infos -> clos_tab -> FredNative.elem -> Constr.constr
-  val klt : clos_infos -> clos_tab -> usubs -> Constr.constr -> Constr.constr
-  val norm_head : clos_infos -> clos_tab -> fconstr -> Constr.constr
-  val zip_term :
-    clos_infos ->
-    clos_tab -> Constr.constr -> 'a pre_stack_member list -> Constr.constr
   val whd_val : clos_infos -> clos_tab -> FredNative.elem -> Constr.constr
-  val norm_val : clos_infos -> clos_tab -> FredNative.elem -> Constr.constr
-  val norm_term :
-    clos_infos -> clos_tab -> usubs -> Constr.constr -> Constr.constr
   val whd_stack :
     clos_infos ->
     clos_tab ->
@@ -2002,149 +1993,11 @@ let is_val v = match v.term with
 | FProd _ | FLetIn _ | FEvar _ | FArray _ | FLIFT _ | FCLOS _ -> false
 | FIrrelevant | FLOCKED -> assert false
 
-let rec kl info tab m =
-  let share = info.i_cache.i_share in
-  if is_val m then term_of_fconstr m
-  else
-    let (nm,s) = kni info tab m [] in
-    let () = if share then ignore (fapp_stack (nm, s)) in (* to unlock Zupdates! *)
-    zip_term info tab (norm_head info tab nm) s
-
-and klt info tab e t = match kind t with
-| Rel i ->
-  begin match expand_rel i (fst e) with
-  | Inl (n, mt) -> kl info tab @@ lift_fconstr n mt
-  | Inr (k, None) -> if Int.equal k i then t else mkRel k
-  | Inr (k, Some p) -> kl info tab @@ lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
-  end
-| App (hd, args) ->
-  begin match kind hd with
-  | Ind _ | Construct _ ->
-    let args' = Array.Smart.map (fun c -> klt info tab e c) args in
-    let hd' = subst_instance_constr (snd e) hd in
-    if hd' == hd && args' == args then t
-    else mkApp (hd', args')
-  | Var _ | Const _ | CoFix _ | Lambda _ | Fix _ | Prod _ | Evar _ | Case _
-  | Cast _ | LetIn _ | Proj _ | Array _ | Rel _ | Meta _ | Sort _ | Int _
-  | Float _ | String _ ->
-    let share = info.i_cache.i_share in
-    let (nm,s) = knit info tab e t [] in
-    let () = if share then ignore (fapp_stack (nm, s)) in (* to unlock Zupdates! *)
-    zip_term info tab (norm_head info tab nm) s
-  | App _ -> assert false
-  end
-| Lambda (na, u, c) ->
-  let na' = usubst_binder e na in
-  let u' = klt info tab e u in
-  let c' = klt (push_relevance info na') tab (usubs_lift e) c in
-  if na' == na && u' == u && c' == c then t
-  else mkLambda (na', u', c')
-| Prod (na, u, v) ->
-  let na' = usubst_binder e na in
-  let u' = klt info tab e u in
-  let v' = klt (push_relevance info na') tab (usubs_lift e) v in
-  if na' == na && u' == u && v' == v then t
-  else mkProd (na', u', v')
-| Cast (t, _, _) -> klt info tab e t
-| Var _ | Const _ | CoFix _ | Fix _ | Evar _ | Case _ | LetIn _ | Proj _ | Array _ ->
-  let share = info.i_cache.i_share in
-  let (nm,s) = knit info tab e t [] in
-  let () = if share then ignore (fapp_stack (nm, s)) in (* to unlock Zupdates! *)
-  zip_term info tab (norm_head info tab nm) s
-| Meta _ | Sort _ | Ind _ | Construct _ | Int _ | Float _ | String _ ->
-  subst_instance_constr (snd e) t
-
-(* no redex: go up for atoms and already normalized terms, go down
-   otherwise. *)
-and norm_head info tab m =
-  if is_val m then term_of_fconstr m else
-    match m.term with
-      | FLambda(_n,tys,f,e) ->
-        let fold (e, info, ctxt) (na, ty) =
-          let na = usubst_binder e na in
-          let ty = klt info tab e ty in
-          let info = push_relevance info na in
-          (usubs_lift e, info, (na, ty) :: ctxt)
-        in
-        let (e', info, rvtys) = List.fold_left fold (e,info,[]) tys in
-        let bd = klt info tab e' f in
-        List.fold_left (fun b (na,ty) -> mkLambda(na,ty,b)) bd rvtys
-      | FLetIn(na,a,b,f,e) ->
-          let na = usubst_binder e na in
-          let c = klt (push_relevance info na) tab (usubs_lift e) f in
-          mkLetIn(na, kl info tab a, kl info tab b, c)
-      | FProd(na,dom,rng,e) ->
-        let na = usubst_binder e na in
-        let rng = klt (push_relevance info na) tab (usubs_lift e) rng in
-          mkProd(na, kl info tab dom, rng)
-      | FCoFix((n,(na,tys,bds)),e) ->
-          let na = Array.Smart.map (usubst_binder e) na in
-          let infobd = push_relevances info na in
-          let ftys = Array.map (fun ty -> klt info tab e ty) tys in
-          let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) bd) bds in
-          mkCoFix (n, (na, ftys, fbds))
-      | FFix((n,(na,tys,bds)),e) ->
-          let na = Array.Smart.map (usubst_binder e) na in
-          let infobd = push_relevances info na in
-          let ftys = Array.map (fun ty -> klt info tab e ty) tys in
-          let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) bd) bds in
-          mkFix (n, (na, ftys, fbds))
-      | FEvar(ev, args, env, repack) ->
-          repack (ev, List.map (fun a -> klt info tab env a) args)
-      | FProj (p,r,c) ->
-        mkProj (p, r, kl info tab c)
-      | FArray (u, a, ty) ->
-        let a, def = Parray.to_array a in
-        let a = Array.map (kl info tab) a in
-        let def = kl info tab def in
-        let ty = kl info tab ty in
-        mkArray (u, a, def, ty)
-      | FLOCKED | FRel _ | FAtom _ | FFlex _ | FInd _ | FConstruct _
-      | FApp _ | FCaseT _ | FCaseInvert _ | FLIFT _ | FCLOS _ | FInt _
-      | FFloat _ | FString _ -> term_of_fconstr m
-      | FIrrelevant -> assert false (* only introduced when converting *)
-
-and zip_term info tab m stk = match stk with
-| [] -> m
-| Zapp args :: s ->
-    zip_term info tab (mkApp(m, Array.map (kl info tab) args)) s
-| ZcaseT(ci, u, pms, (p,r), br, e) :: s ->
-  let zip_ctx (nas, c) =
-      let nas = Array.map (usubst_binder e) nas in
-      let e = usubs_liftn (Array.length nas) e in
-      (nas, klt info tab e c)
-    in
-    let r = usubst_relevance e r in
-    let u = usubst_instance e u in
-    let t = mkCase(ci, u, Array.map (fun c -> klt info tab e c) pms, (zip_ctx p, r),
-      NoInvert, m, Array.map zip_ctx br) in
-    zip_term info tab t s
-| Zproj (p,r)::s ->
-    let t = mkProj (Projection.make p true, r, m) in
-    zip_term info tab t s
-| Zfix(fx,par)::s ->
-    let h = mkApp(zip_term info tab (kl info tab fx) par,[|m|]) in
-    zip_term info tab h s
-| Zshift(n)::s ->
-    zip_term info tab (lift n m) s
-| Zupdate(_rf)::s ->
-    zip_term info tab m s
-| Zprimitive(_,c,rargs, kargs)::s ->
-    let kargs = List.map (fun (_,a) -> kl info tab a) kargs in
-    let args =
-      List.fold_left (fun args a -> kl info tab a ::args) (m::kargs) rargs in
-    let h = mkApp (mkConstU c, Array.of_list args) in
-    zip_term info tab h s
-| Zext _ :: _ -> assert false        (* client's responsibility *)
-
 (* Initialization and then normalization *)
 
 (* weak reduction *)
 let whd_val info tab v = term_of_fconstr (kh info tab v [])
 
-(* strong reduction *)
-let norm_val info tab v = kl info tab v
-let norm_term info tab e t = klt info tab e t
 
 let whd_stack infos tab m stk = match m.mark with
 | Ntrl ->
@@ -2269,8 +2122,18 @@ let split_zext : 'a CClosure.stack -> ('a CClosure.stack * 'a * 'a CClosure.stac
       go (z :: acc) s
   in go []
 
+type info =
+  { i_reds : RedFlags.reds;
+    i_ccreds : RedFlags.reds;
+    i_ccinfos : CClosure.clos_infos;
+    i_cctab : CClosure.Table.t;
+    i_luinfos : CClosure.clos_infos;
+    i_lutab : CClosure.Table.t;
+    i_env : Environ.env;
+    i_sigma : Evd.evar_map;
+  }
 
-let wh ~only_head reds env sigma c =
+let mk_infos reds env sigma : info =
   (* We are removing [fDELTA] and [fFIX] because those we need to handle manually *)
   let ccreds =
     RedFlags.(mkflags (List.filter (fun k -> red_set reds k) [fBETA;fMATCH;fCOFIX;fZETA]))
@@ -2286,11 +2149,36 @@ let wh ~only_head reds env sigma c =
   let luinfos = CClosure.create_clos_infos reds env in
   let lutab = CClosure.create_tab () in
 
-  let ts = RedFlags.red_transparent reds in
+  {
+  i_reds = reds;
+  i_ccreds = ccreds;
+  i_ccinfos = ccinfos;
+  i_cctab = cctab;
+  i_luinfos = luinfos;
+  i_lutab = lutab;
+  i_env = env;
+  i_sigma = sigma;
+}
 
-  let use_fix = RedFlags.(red_set reds fFIX) in
+let push_relevance :
+    info -> _ -> info =
+  fun i na ->
+  { i with
+    i_ccinfos = CClosure.push_relevance i.i_ccinfos na;
+    i_luinfos = CClosure.push_relevance i.i_luinfos na;
+  }
 
-  let red = CClosure.whd_stack ccinfos cctab in
+let push_relevances :
+    info -> _ -> info =
+  fun i na ->
+  { i with
+    i_ccinfos = CClosure.push_relevances i.i_ccinfos na;
+    i_luinfos = CClosure.push_relevances i.i_luinfos na;
+  }
+
+
+(* [only_head] decides if we want to undo work when it was not strictly necessary for weak head reduction. *)
+let wh ~only_head infos fc stack =
 
   let find_fix refs fix =
     (* try to find a matching fixpoint in [refs] *)
@@ -2302,12 +2190,17 @@ let wh ~only_head reds env sigma c =
     List.find_opt fn refs
   in
 
-  let rec go refs ((fc, stack) : CClosure.fconstr * stack) =
+  let ts = RedFlags.red_transparent infos.i_reds in
+  let red = CClosure.whd_stack infos.i_ccinfos infos.i_cctab in
+
+  let rec go refs (fc : CClosure.fconstr) (stack : stack) =
+    let use_fix = RedFlags.(red_set infos.i_reds fFIX) in
+
     let ft = CClosure.fterm_of fc in
     dbg Pp.(fun () -> str "go ft = " ++ pp_fterm ft);
-    dbg Pp.(fun () -> str "go head term = " ++ pp_fconstr env sigma fc);
-    dbg Pp.(fun () -> str "go full term = " ++ pp_fconstr env sigma (CClosure.zip fc stack));
-    dbg Pp.(fun () -> str "go stack = " ++ pp_stack env sigma stack);
+    dbg Pp.(fun () -> str "go head term = " ++ pp_fconstr infos.i_env infos.i_sigma fc);
+    dbg Pp.(fun () -> str "go full term = " ++ pp_fconstr infos.i_env infos.i_sigma (CClosure.zip fc stack));
+    dbg Pp.(fun () -> str "go stack = " ++ pp_stack infos.i_env infos.i_sigma stack);
     match ft with
     (* Impossible cases *)
     | CClosure.FApp (_, _)
@@ -2324,7 +2217,7 @@ let wh ~only_head reds env sigma c =
       -> assert false
     (* Interesting cases *)
     | CClosure.FConstruct (c, usubs) ->
-      dbg (fun () -> Printer.pr_constructor env c);
+      dbg (fun () -> Printer.pr_constructor infos.i_env c);
       begin
         let open CClosure in
         match [@ocaml.warning "-4"] strip_update_shift_app fc stack with
@@ -2340,28 +2233,32 @@ let wh ~only_head reds env sigma c =
           let rarg = zip fc cargs in
           let stack = par @ append_stack [|rarg|] s in
           let (fxe,fxbd) = contract_fix_vect_def ofix (fterm_of fx) in
-          go refs (red (mk_clos fxe fxbd) stack)
+          let fc, stack = red (mk_clos fxe fxbd) stack in
+          go refs fc stack
         | (_, cargs, Zext(ZUnfoldArgs (cref, hc, recargs, nomatchfix),pars)::stack) ->
           dbg Pp.(fun () -> str "FConstruct | ZUnfoldArgs");
           let fc = zip fc cargs in
           let pars = pars @ [CClosure.Zapp [|fc|]] in (* TODO maintain this in reversed order *)
-          def ~nomatchfix cref recargs refs pars (hc, stack)
+          def ~nomatchfix cref recargs refs pars hc stack
         | (_, cargs, Zext(ZUndoOnMatchFix _, _) :: stack) ->
+          dbg Pp.(fun () -> str "FConstruct | ZUndoOnMatchFix");
           (* A constructor is not a match or a fix. *)
-          go refs (fc, cargs @ stack)
+          (* unlock reductions blocked by [ZUndoOnMatchFix] *)
+          let (fc, stack) = red fc (cargs @ stack) in
+          go refs fc stack
         | (_,args,s) ->
-          finish (fc, (args @ s))
+          finish fc (args @ s)
       end
     | CClosure.FCLOS (fix, usubs) when Constr.isFix fix ->
       begin
         let (_,_) as fix = Constr.destFix fix in
         match find_fix refs fix with
         | Some (_, (cnst, univs)) when Esubst.is_subs_id (fst usubs) ->
-          dbg Pp.(fun () -> str "refolding: " ++ Printer.pr_constant env cnst);
+          dbg Pp.(fun () -> str "refolding: " ++ Printer.pr_constant infos.i_env cnst);
           let univs = CClosure.usubst_instance usubs univs in
           let fc = CClosure.mk_atom (Constr.mkConstU (cnst, univs)) in
-          finish (fc, stack)
-        | _ -> finish (fc, stack)
+          finish fc stack
+        | _ -> finish fc stack
       end
     | CClosure.FCLOS (case, usubs) when Constr.isCase case ->
       assert false
@@ -2370,13 +2267,13 @@ let wh ~only_head reds env sigma c =
         let open ReductionBehaviour in
         match get cnst with
         | None ->
-          dbg Pp.(fun () -> Printer.pr_constant env cnst ++ str ": unfolding immediately");
-          unfold ~nomatchfix:true cref refs (fc, stack)
+          dbg Pp.(fun () -> Printer.pr_constant infos.i_env cnst ++ str ": unfolding immediately");
+          unfold ~nomatchfix:true cref refs fc stack
         | Some NeverUnfold ->
-          dbg Pp.(fun () -> Printer.pr_constant env cnst ++ str ": never unfolding");
-          finish (fc, stack)
+          dbg Pp.(fun () -> Printer.pr_constant infos.i_env cnst ++ str ": never unfolding");
+          finish fc stack
         | Some (UnfoldWhen {recargs;nargs}) ->
-          dbg Pp.(fun () -> Printer.pr_constant env cnst ++ str ": unfolding after " ++ prlist_with_sep (fun () -> str ", ") int recargs);
+          dbg Pp.(fun () -> Printer.pr_constant infos.i_env cnst ++ str ": unfolding after " ++ prlist_with_sep (fun () -> str ", ") int recargs);
           let (nomatchfix, enough_args) =
             match nargs with
             | None -> (true, true)
@@ -2384,11 +2281,11 @@ let wh ~only_head reds env sigma c =
           in
           if not enough_args then
             let () = dbg Pp.(fun () -> str "not enough args") in
-            finish (fc, stack)
+            finish fc stack
           else
-          prepare_def ~nomatchfix cref recargs refs (fc, stack)
+          prepare_def ~nomatchfix cref recargs refs fc stack
         | Some UnfoldWhenNoMatch{recargs;nargs} ->
-          dbg Pp.(fun () -> Printer.pr_constant env cnst ++ str ": unfolding after " ++ prlist_with_sep (fun () -> str ", ") int recargs ++ str "; NoMatch");
+          dbg Pp.(fun () -> Printer.pr_constant infos.i_env cnst ++ str ": unfolding after " ++ prlist_with_sep (fun () -> str ", ") int recargs ++ str "; NoMatch");
           assert false
       end
     | CClosure.FProj (proj, _, _) when (Names.PRpred.mem (Names.Projection.repr proj) ts.tr_prj) ->
@@ -2412,40 +2309,40 @@ let wh ~only_head reds env sigma c =
     | CClosure.FProj (_, _, _)
     | CClosure.FFlex (Names.ConstKey _)
     | CClosure.FCLOS _ ->
-      finish (fc, stack)
+      finish fc stack
 
-  and finish : CClosure.fconstr * stack -> (CClosure.fconstr * stack) = fun (fc, stack) ->
+  and finish : CClosure.fconstr -> stack -> (CClosure.fconstr * stack) = fun fc stack ->
     (* We've reached the end *)
     dbg Pp.(fun () -> str "finish ft = " ++ pp_fterm (CClosure.fterm_of fc));
-    dbg Pp.(fun () -> str "finish head term = " ++ Printer.pr_constr_env env sigma (CClosure.term_of_fconstr fc));
-    dbg Pp.(fun () -> str "finish full term = " ++ Printer.pr_constr_env env sigma CClosure.(term_of_fconstr (zip fc stack)));
-    dbg Pp.(fun () -> str "finish stack = " ++ pp_stack env sigma stack);
+    dbg Pp.(fun () -> str "finish head term = " ++ Printer.pr_constr_env infos.i_env infos.i_sigma (CClosure.term_of_fconstr fc));
+    dbg Pp.(fun () -> str "finish full term = " ++ Printer.pr_constr_env infos.i_env infos.i_sigma CClosure.(term_of_fconstr (zip fc stack)));
+    dbg Pp.(fun () -> str "finish stack = " ++ pp_stack infos.i_env infos.i_sigma stack);
     begin
       (* Handle Zext nodes *)
       let open CClosure in
-      let rec fin acc (fc, stack) =
+      let rec fin acc fc stack =
         dbg Pp.(fun () -> str "fin ft = " ++ pp_fterm (CClosure.fterm_of fc));
-        dbg Pp.(fun () -> str "fin head term = " ++ Printer.pr_constr_env env sigma (CClosure.term_of_fconstr fc));
-        dbg Pp.(fun () -> str "fin full acc term = " ++ Printer.pr_constr_env env sigma CClosure.(term_of_fconstr (zip fc (List.rev acc))));
-        dbg Pp.(fun () -> str "fin full term = " ++ Printer.pr_constr_env env sigma CClosure.(term_of_fconstr (zip fc (List.rev_append acc stack))));
-        dbg Pp.(fun () -> str "fin stack = " ++ pp_stack env sigma stack);
-        dbg Pp.(fun () -> str "fin acc = " ++ pp_stack env sigma acc);
+        dbg Pp.(fun () -> str "fin head term = " ++ Printer.pr_constr_env infos.i_env infos.i_sigma (CClosure.term_of_fconstr fc));
+        dbg Pp.(fun () -> str "fin full acc term = " ++ Printer.pr_constr_env infos.i_env infos.i_sigma CClosure.(term_of_fconstr (zip fc (List.rev acc))));
+        dbg Pp.(fun () -> str "fin full term = " ++ Printer.pr_constr_env infos.i_env infos.i_sigma CClosure.(term_of_fconstr (zip fc (List.rev_append acc stack))));
+        dbg Pp.(fun () -> str "fin stack = " ++ pp_stack infos.i_env infos.i_sigma stack);
+        dbg Pp.(fun () -> str "fin acc = " ++ pp_stack infos.i_env infos.i_sigma acc);
         let fc = CClosure.mk_cstr (CClosure.fterm_of fc) in (* TODO: fix *)
         match split_zext stack with
         | Some (cargs, ZUnfoldArgs (cref, hc, _recargs, _nomatchfix), par, stack) ->
           dbg Pp.(fun () -> str "finish: found ZUnfoldArgs");
           (* We didn't reach a constructor. We just return the application of [hc] to [fc] with their correspdoning arguments. *)
           let fc = zip fc (List.rev cargs) in
-          dbg Pp.(fun () -> str "fin zunfold fc = " ++ Printer.pr_constr_env env sigma (CClosure.term_of_fconstr fc));
+          dbg Pp.(fun () -> str "fin zunfold fc = " ++ Printer.pr_constr_env infos.i_env infos.i_sigma (CClosure.term_of_fconstr fc));
           let hc = zip hc (par @ [Zapp [|fc|]]) in
-          dbg Pp.(fun () -> str "fin zunfold hc = " ++ Printer.pr_constr_env env sigma (CClosure.term_of_fconstr hc));
-          fin acc (mk_ntrl (fterm_of hc), stack)
+          dbg Pp.(fun () -> str "fin zunfold hc = " ++ Printer.pr_constr_env infos.i_env infos.i_sigma (CClosure.term_of_fconstr hc));
+          fin acc (mk_ntrl (fterm_of hc)) stack
         | Some (cargs, ZUndoOnMatchFix fc', par, stack) ->
           dbg Pp.(fun () -> str "finish: found ZUndoOnMatchFix");
           let undo () =
             dbg Pp.(fun () -> str "undo!");
             let fc' = zip fc' par in
-            fin acc (fc', stack)
+            fin acc fc' stack
           in
           begin
             match CClosure.fterm_of fc with
@@ -2460,19 +2357,19 @@ let wh ~only_head reds env sigma c =
                 undo ()
               else
                 let fc = zip fc cargs in
-                fin acc (fc, stack)
+                fin acc fc stack
           end
         | None ->
           dbg Pp.(fun () -> str "finish: no Zext");
           (fc, List.rev_append acc stack)
       in
-      fin [] (fc, stack)
+      fin [] fc stack
     end
 
-  and unfold ~nomatchfix cref refs (fc, stack) : CClosure.fconstr * stack =
-    dbg Pp.(fun () -> str "unfolding constant = " ++ Printer.pr_constant env (fst cref));
-    match CClosure.unfold_ref_with_args luinfos lutab (Names.ConstKey cref) stack with
-    | None -> finish (fc, stack)
+  and unfold ~nomatchfix cref refs fc stack : CClosure.fconstr * stack =
+    dbg Pp.(fun () -> str "unfolding constant = " ++ Printer.pr_constant infos.i_env (fst cref));
+    match CClosure.unfold_ref_with_args infos.i_luinfos infos.i_lutab (Names.ConstKey cref) stack with
+    | None -> finish fc stack
     | Some (fc', stack') ->
       let refs =
         match CClosure.fterm_of fc' with
@@ -2486,50 +2383,196 @@ let wh ~only_head reds env sigma c =
           let fc = CClosure.mk_ntrl (CClosure.fterm_of fc) in (* TODO: fix this  *)
           match [@ocaml.warning "-4"] CClosure.strip_update_shift_app fc stack with
           | (_, cargs, stack') ->
-            dbg Pp.(fun () -> str "pushing ZUndoOnMatchFix with stack = " ++ pp_stack env sigma cargs);
+            dbg Pp.(fun () -> str "pushing ZUndoOnMatchFix with stack = " ++ pp_stack infos.i_env infos.i_sigma cargs);
             cargs @ CClosure.Zext (ZUndoOnMatchFix fc, cargs) :: stack'
         else
           stack'
       in
-      let r = red fc' stack' in
-      go refs r
+      let fc, stack = red fc' stack' in
+      go refs fc stack
 
-  and prepare_def ~nomatchfix cref recargs refs (fc, stack) =
+  and prepare_def ~nomatchfix cref recargs refs fc stack =
     let nomatchfix, stack =
       if only_head && nomatchfix then
         let fc = CClosure.mk_ntrl (CClosure.fterm_of fc) in (* TODO: fix this  *)
         match [@ocaml.warning "-4"] CClosure.strip_update_shift_app fc stack with
         | (_, cargs, stack) ->
-          dbg Pp.(fun () -> str "pushing ZUndoOnMatchFix with stack = " ++ pp_stack env sigma cargs);
+          dbg Pp.(fun () -> str "pushing ZUndoOnMatchFix with stack = " ++ pp_stack infos.i_env infos.i_sigma cargs);
           false, cargs @ CClosure.Zext (ZUndoOnMatchFix fc, cargs) :: stack
       else
           nomatchfix, stack
     in
-    def ~nomatchfix cref recargs refs [] (fc, stack)
+    def ~nomatchfix cref recargs refs [] fc stack
 
-  and def ~nomatchfix cref recargs refs pars (fc, stack) : CClosure.fconstr * stack =
+  and def ~nomatchfix cref recargs refs pars fc stack : CClosure.fconstr * stack =
     begin
       match recargs with
-      | [] -> unfold ~nomatchfix cref refs (fc, pars @ stack)
+      | [] -> unfold ~nomatchfix cref refs fc (pars @ stack)
       | recarg::recargs ->
         let fc = CClosure.mk_cstr (CClosure.fterm_of fc) in (* TODO: fix *)
         match CClosure.get_nth_arg fc (recarg - List.length pars) stack with
         | (Some(pars',arg),stack) ->
           let stack = CClosure.Zext (ZUnfoldArgs (cref, fc, recargs, nomatchfix),pars @ pars') :: stack in
-          let r = red arg stack in
-          go refs r
+          let fc, stack = red arg stack in
+          go refs fc stack
         | (None, stack) ->
           assert false
     end
   in
-  let c = EConstr.Unsafe.to_constr c in
-  dbg Pp.(fun () -> str "intial term = " ++ Printer.pr_constr_env env sigma c);
-  let process = red CClosure.(mk_clos (Esubst.subs_id 0, UVars.Instance.empty) c) [] in
-  let (fc, stack) = go [] process in
-  let c = CClosure.term_of_process fc stack in
-  EConstr.of_constr c
+  let fc, stack = red fc stack in
+  go [] fc stack
+
+let wh_val_constr ~only_head infos e c =
+  dbg Pp.(fun () -> str "intial term = " ++ Printer.pr_constr_env infos.i_env infos.i_sigma c);
+  let fc = CClosure.(mk_clos e c) in
+  wh ~only_head infos fc []
+
+open Util
+open Esubst
+open Constr
+open Vars
+
+let rec kl infos m =
+  if CClosure.is_val m then CClosure.term_of_fconstr m (* TODO: I change marks in [wh] in some places; this could backfire *)
+  else
+    let (nm,s) = wh ~only_head:false infos m [] in
+    zip_term infos (norm_head infos nm) s
+
+and klt infos e t =
+  match kind t with
+| Rel i ->
+  begin match expand_rel i (fst e) with
+  | Inl (n, mt) -> kl infos @@ CClosure.lift_fconstr n mt
+  | Inr (k, None) -> if Int.equal k i then t else mkRel k
+  | Inr (k, Some p) -> kl infos @@ CClosure.lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
+  end
+| App (hd, args) ->
+  begin match kind hd with
+  | Ind _ | Construct _ ->
+    let args' = Array.Smart.map (fun c -> klt infos e c) args in
+    let hd' = subst_instance_constr (snd e) hd in
+    if hd' == hd && args' == args then t
+    else mkApp (hd', args')
+  | Var _ | Const _ | CoFix _ | Lambda _ | Fix _ | Prod _ | Evar _ | Case _
+  | Cast _ | LetIn _ | Proj _ | Array _ | Rel _ | Meta _ | Sort _ | Int _
+  | Float _ | String _ ->
+    let (nm,s) = wh_val_constr ~only_head:false infos e t in
+    zip_term infos (norm_head infos nm) s
+  | App _ -> assert false
+  end
+| Lambda (na, u, c) ->
+  let na' = CClosure.usubst_binder e na in
+  let u' = klt infos e u in
+  let c' = klt (push_relevance infos na') (CClosure.usubs_lift e) c in
+  if na' == na && u' == u && c' == c then t
+  else mkLambda (na', u', c')
+| Prod (na, u, v) ->
+  let na' = CClosure.usubst_binder e na in
+  let u' = klt infos e u in
+  let v' = klt (push_relevance infos na') (CClosure.usubs_lift e) v in
+  if na' == na && u' == u && v' == v then t
+  else mkProd (na', u', v')
+| Cast (t, _, _) -> klt infos e t
+| Var _ | Const _ | CoFix _ | Fix _ | Evar _ | Case _ | LetIn _ | Proj _ | Array _ ->
+  let (nm,s) = wh_val_constr ~only_head:false infos e t in
+  zip_term infos (norm_head infos nm) s
+| Meta _ | Sort _ | Ind _ | Construct _ | Int _ | Float _ | String _ ->
+  subst_instance_constr (snd e) t
+
+(* no redex: go up for atoms and already normalized terms, go down
+   otherwise. *)
+and norm_head infos m =
+  if CClosure.is_val m then CClosure.term_of_fconstr m else
+    match m.term with
+      | FLambda(_n,tys,f,e) ->
+        let fold (e, info, ctxt) (na, ty) =
+          let na = CClosure.usubst_binder e na in
+          let ty = klt infos e ty in
+          let info = push_relevance info na in
+          (CClosure.usubs_lift e, info, (na, ty) :: ctxt)
+        in
+        let (e', info, rvtys) = List.fold_left fold (e,infos,[]) tys in
+        let bd = klt infos e' f in
+        List.fold_left (fun b (na,ty) -> mkLambda(na,ty,b)) bd rvtys
+      | FLetIn(na,a,b,f,e) ->
+          let na = CClosure.usubst_binder e na in
+          let c = klt (push_relevance infos na) (CClosure.usubs_lift e) f in
+          mkLetIn(na, kl infos a, kl infos b, c)
+      | FProd(na,dom,rng,e) ->
+        let na = CClosure.usubst_binder e na in
+        let rng = klt (push_relevance infos na) (CClosure.usubs_lift e) rng in
+          mkProd(na, kl infos dom, rng)
+      | FCoFix((n,(na,tys,bds)),e) ->
+          let na = Array.Smart.map (CClosure.usubst_binder e) na in
+          let infobd = push_relevances infos na in
+          let ftys = Array.map (fun ty -> klt infos e ty) tys in
+          let fbds = Array.map (fun bd -> klt infobd (CClosure.usubs_liftn (Array.length na) e) bd) bds in
+          mkCoFix (n, (na, ftys, fbds))
+      | FFix((n,(na,tys,bds)),e) ->
+          let na = Array.Smart.map (CClosure.usubst_binder e) na in
+          let infobd = push_relevances infos na in
+          let ftys = Array.map (fun ty -> klt infos e ty) tys in
+          let fbds = Array.map (fun bd -> klt infobd (CClosure.usubs_liftn (Array.length na) e) bd) bds in
+          mkFix (n, (na, ftys, fbds))
+      | FEvar(ev, args, env, repack) ->
+          repack (ev, List.map (fun a -> klt infos env a) args)
+      | FProj (p,r,c) ->
+        mkProj (p, r, kl infos c)
+      | FArray (u, a, ty) ->
+        let a, def = Parray.to_array a in
+        let a = Array.map (kl infos) a in
+        let def = kl infos def in
+        let ty = kl infos ty in
+        mkArray (u, a, def, ty)
+      | FLOCKED | FRel _ | FAtom _ | FFlex _ | FInd _ | FConstruct _
+      | FApp _ | FCaseT _ | FCaseInvert _ | FLIFT _ | FCLOS _ | FInt _
+      | FFloat _ | FString _ -> CClosure.term_of_fconstr m
+      | FIrrelevant -> assert false (* only introduced when converting *)
+
+and zip_term infos m stk = match stk with
+| [] -> m
+| Zapp args :: s ->
+    zip_term infos (mkApp(m, Array.map (kl infos) args)) s
+| ZcaseT(ci, u, pms, (p,r), br, e) :: s ->
+  let zip_ctx (nas, c) =
+      let nas = Array.map (CClosure.usubst_binder e) nas in
+      let e = CClosure.usubs_liftn (Array.length nas) e in
+      (nas, klt infos e c)
+    in
+    let r = CClosure.usubst_relevance e r in
+    let u = CClosure.usubst_instance e u in
+    let t = mkCase(ci, u, Array.map (fun c -> klt infos e c) pms, (zip_ctx p, r),
+      NoInvert, m, Array.map zip_ctx br) in
+    zip_term infos t s
+| Zproj (p,r)::s ->
+    let t = mkProj (Names.Projection.make p true, r, m) in
+    zip_term infos t s
+| Zfix(fx,par)::s ->
+    let h = mkApp(zip_term infos (kl infos fx) par,[|m|]) in
+    zip_term infos h s
+| Zshift(n)::s ->
+    zip_term infos (lift n m) s
+| Zupdate(_rf)::s ->
+    zip_term infos m s
+| Zprimitive(_,c,rargs, kargs)::s ->
+    let kargs = List.map (fun (_,a) -> kl infos a) kargs in
+    let args =
+      List.fold_left (fun args a -> kl infos a ::args) (m::kargs) rargs in
+    let h = mkApp (mkConstU c, Array.of_list args) in
+    zip_term infos h s
+| Zext _ :: _ -> assert false        (* client's responsibility *)
+
 
 let rered (s : Genredexpr.strength) reds env sigma c =
   let only_head = s = Genredexpr.Head in
-  assert (only_head);
-  wh ~only_head reds env sigma c
+  let c = EConstr.Unsafe.to_constr c in
+  let e = (Esubst.subs_id 0, UVars.Instance.empty) in
+  let infos = mk_infos reds env sigma in
+  let c =
+    if only_head then
+      let (fc, stack) = wh_val_constr ~only_head infos e c in
+      CClosure.term_of_process fc stack
+    else
+      klt infos e c
+  in
+  EConstr.of_constr c
