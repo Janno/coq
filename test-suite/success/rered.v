@@ -117,10 +117,10 @@ Eval rered in bool_decide (decide_rel _ (fun x y => left eq_refl) 1 1).
 (*     cbn. *)
 
 Goal (if if bool_decide (decide_rel _ type_eq_dec Tvoid Tvoid) then true else false then True else False).
-  Succeed time "lazy" lazy.          (* 0.0s *)
-  Succeed time "cbv" cbv.           (* 0.s *)
-  Succeed time "vm" vm_compute.    (* 0.s *)
-  Succeed time "simpl" simpl.         (* 0.25s *)
-  Succeed time "cbn" cbn.         (* 0.25s *)
-  Succeed time "rered" rered.
+  Succeed time "lazy " lazy.       (* Tactic call lazy  ran for 0. secs (0.u,0.s) (success) *)
+  Succeed time "cbv  " cbv.        (* Tactic call cbv   ran for 0. secs (0.u,0.s) (success) *)
+  Succeed time "vm   " vm_compute. (* Tactic call vm    ran for 0. secs (0.u,0.s) (success) *)
+  Succeed time "simpl" simpl.      (* Tactic call simpl ran for 0.062 secs (0.061u,0.s) (su *)
+  Succeed time "cbn  " cbn.        (* Tactic call cbn   ran for 0.707 secs (0.706u,0.s) (su *)
+  Succeed time "rered" rered.      (* Tactic call rered ran for 0. secs (0.u,0.s) (success) *)
 Abort.
