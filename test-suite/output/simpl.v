@@ -71,7 +71,7 @@ Eval hnf in a.(p).    (* -> 0 *)
 Arguments p : simpl never.
 Eval simpl in a.(p).  (* -> a.(p) *)
 Eval cbn in a.(p).    (* -> a.(p) *)
-Eval kred in a.(p).   (* -> {|p:=0|}.(p) *) (* TODO *)
+Eval kred in a.(p).   (* -> a.(p) *)
 Eval hnf in a.(p).    (* -> 0 *)
 Arguments p : simpl nomatch.
 Arguments a : simpl never.
@@ -103,7 +103,7 @@ CoInductive U := {p:U}.
 CoFixpoint a := {|p:=a|}.
 Eval simpl in a.(p).  (* -> a *)
 Eval cbn in a.(p).    (* -> a *)
-Eval kred in a.(p).   (* -> a *)
+Eval kred in a.(p).   (* -> a *) (* TODO cofix refolding *)
 Eval hnf in a.(p).    (* -> a *)
 Arguments p : simpl never.
 Eval simpl in a.(p).  (* -> a.(p) *)
@@ -149,7 +149,7 @@ Eval hnf in a.(p).    (* -> 0 *)
 Arguments p : simpl never.
 Eval simpl in a.(p).  (* -> a.(p) *)
 Eval cbn in a.(p).    (* -> a.(p) *)
-Eval kred in a.(p).   (* -> {|p:=0|}.(p) *) (* TODO *)
+Eval kred in a.(p).   (* -> a.(p) *)
 Eval hnf in a.(p).    (* -> 0 *)
 Arguments p : simpl nomatch.
 Arguments a : simpl never.
@@ -180,7 +180,7 @@ CoInductive U := {p:U}.
 CoFixpoint a := {|p:=a|}.
 Eval simpl in a.(p).     (* -> a *)
 Eval cbn in a.(p).       (* -> a *)
-Eval kred in a.(p).      (* -> a *)
+Eval kred in a.(p).      (* -> a *) (* TODO cofix refolding *)
 Eval hnf in a.(p).       (* -> a *)
 Arguments p : simpl never.
 Eval simpl in a.(p).     (* -> a.(p) *)
@@ -229,7 +229,7 @@ Goal P a.(p). unfold p. hnf. Show. Abort.   (* -> a.(p) *) (* bug primproj 2 *)
 Arguments p : simpl never.
 Goal P a.(p). unfold p. simpl. Show. Abort. (* -> 0 *)     (* bug never 3 *)
 Goal P a.(p). unfold p. cbn. Show. Abort.   (* -> a.(p) *)
-Goal P a.(p). unfold p. kred. Show. Abort.  (* -> a.(p) *) (* TODO *)
+Goal P a.(p). unfold p. kred. Show. Abort.  (* -> a.(p) *)
 Goal P a.(p). unfold p. hnf. Show. Abort.   (* -> a.(p) *) (* bug primproj 2 *)
 Arguments p : simpl nomatch.
 Arguments a : simpl never.
@@ -264,7 +264,7 @@ Notation COFIX := (cofix a := {|q:=a|}).
 Axiom P : U -> Prop.
 Goal P a.(q). unfold q. simpl. Show. Abort.  (* -> a *)
 Goal P a.(q). unfold q. cbn. Show. Abort.    (* -> a *)
-Goal P a.(q). unfold q. kred. Show. Abort.   (* -> a *)
+Goal P a.(q). unfold q. kred. Show. Abort.   (* -> a *) (* TODO cofix refolding *)
 Goal P a.(q). unfold q. hnf. Show. Abort.    (* -> a.(q) *) (* bug primproj 4 *)
 Arguments q : simpl never.
 Goal P a.(q). unfold q. simpl. Show. Abort.  (* -> a *)
@@ -314,7 +314,7 @@ Goal P (id p a). unfold id. hnf. Show. Abort.   (* -> a.(p) *) (* bug primproj 2
 Arguments p : simpl never.
 Goal P (id p a). unfold id. simpl. Show. Abort. (* -> a.(p) *)
 Goal P (id p a). unfold id. cbn. Show. Abort.   (* -> a.(p) *)
-Goal P (id p a). unfold id. kred. Show. Abort.  (* -> a.(p) *) (* TODO *)
+Goal P (id p a). unfold id. kred. Show. Abort.  (* -> a.(p) *)
 Goal P (id p a). unfold id. hnf. Show. Abort.   (* -> a.(p) *) (* bug primproj 2 *)
 Arguments p : simpl nomatch.
 Arguments a : simpl never.
