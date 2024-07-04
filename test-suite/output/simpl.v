@@ -103,7 +103,7 @@ CoInductive U := {p:U}.
 CoFixpoint a := {|p:=a|}.
 Eval simpl in a.(p).  (* -> a *)
 Eval cbn in a.(p).    (* -> a *)
-Eval kred in a.(p).   (* -> a *) (* TODO cofix refolding *)
+Eval kred in a.(p).   (* -> a *)
 Eval hnf in a.(p).    (* -> a *)
 Arguments p : simpl never.
 Eval simpl in a.(p).  (* -> a.(p) *)
@@ -180,7 +180,7 @@ CoInductive U := {p:U}.
 CoFixpoint a := {|p:=a|}.
 Eval simpl in a.(p).     (* -> a *)
 Eval cbn in a.(p).       (* -> a *)
-Eval kred in a.(p).      (* -> a *) (* TODO cofix refolding *)
+Eval kred in a.(p).      (* -> a *)
 Eval hnf in a.(p).       (* -> a *)
 Arguments p : simpl never.
 Eval simpl in a.(p).     (* -> a.(p) *)
@@ -264,7 +264,7 @@ Notation COFIX := (cofix a := {|q:=a|}).
 Axiom P : U -> Prop.
 Goal P a.(q). unfold q. simpl. Show. Abort.  (* -> a *)
 Goal P a.(q). unfold q. cbn. Show. Abort.    (* -> a *)
-Goal P a.(q). unfold q. kred. Show. Abort.   (* -> a *) (* TODO cofix refolding *)
+Goal P a.(q). unfold q. kred. Show. Abort.   (* -> a *)
 Goal P a.(q). unfold q. hnf. Show. Abort.    (* -> a.(q) *) (* bug primproj 4 *)
 Arguments q : simpl never.
 Goal P a.(q). unfold q. simpl. Show. Abort.  (* -> a *)
