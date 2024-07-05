@@ -477,11 +477,85 @@ end
 
 module KerPair = struct
 
-  type t =
-    | Same of KerName.t (** user = canonical *)
-    | Dual of KerName.t * KerName.t (** user then canonical *)
+  module Internal :
+    sig
+      type t = private | Same of KerName.t | Dual of KerName.t * KerName.t
+      type kernel_pair = t
+      module SyntacticOrd :
+        sig
+          type t = kernel_pair
+          val compare : t -> t -> int
+          val equal : t -> t -> bool
+          val hash : t -> int
+        end
+      val same : KerName.t -> t
+      val make : KerName.t -> KerName.t -> t
+      val hcons : t -> t
+    end
+  = struct
+    type t =
+      | Same of KerName.t (** user = canonical *)
+      | Dual of KerName.t * KerName.t (** user then canonical *)
 
-  type kernel_pair = t
+    type kernel_pair = t
+
+    let same kn = Same kn
+    let make knu knc = if KerName.equal knu knc then Same knc else Dual (knu,knc)
+
+    module Self_Hashcons =
+      struct
+        type t = kernel_pair
+        let hashcons hkn = function
+          | Same kn -> same (hkn kn)
+          | Dual (knu,knc) -> make (hkn knu) (hkn knc)
+        let eq x y = (* physical comparison on subterms *)
+          x == y ||
+          match x,y with
+          | Same x, Same y -> x == y
+          | Dual (ux,cx), Dual (uy,cy) -> ux == uy && cx == cy
+          | (Same _ | Dual _), _ -> false
+        (** Hash-consing (despite having the same user part implies having
+            the same canonical part is a logical invariant of the system, it
+            is not necessarily an invariant in memory, so we treat kernel
+            names as they are syntactically for hash-consing) *)
+      end
+
+    module Tbl = Hashset.Make(Self_Hashcons)
+
+    let tab = Tbl.create 97
+
+    module SyntacticOrd = struct
+      type t = kernel_pair
+      let compare x y = match x, y with
+        | Same knx, Same kny -> KerName.compare knx kny
+        | Dual (knux,kncx), Dual (knuy,kncy) ->
+          let c = KerName.compare knux knuy in
+          if not (Int.equal c 0) then c
+          else KerName.compare kncx kncy
+        | Same _, _ -> -1
+        | Dual _, _ -> 1
+      let equal x y = x == y || compare x y = 0
+      let hash = function
+        | Same kn -> KerName.hash kn
+        | Dual (knu, knc) ->
+          Hashset.Combine.combine (KerName.hash knu) (KerName.hash knc)
+    end
+
+    let hcons c =
+      let h = SyntacticOrd.hash c in
+      match Tbl.lookup SyntacticOrd.equal h c tab with
+      | Some v -> v
+      | None ->
+        let v = Self_Hashcons.hashcons KerName.hcons c in
+        Tbl.repr h v tab
+
+    let same kn = hcons (same kn)
+    let make knu knc = hcons (make knu knc)
+
+    let hcons c = c
+  end
+
+  include Internal
 
   let canonical = function
     | Same kn -> kn
@@ -491,12 +565,24 @@ module KerPair = struct
     | Same kn -> kn
     | Dual (kn,_) -> kn
 
+  module UserOrd = struct
+    type t = kernel_pair
+    let compare x y = KerName.compare (user x) (user y)
+    let equal x y = x == y || KerName.equal (user x) (user y)
+    let hash x = KerName.hash (user x)
+  end
+
+  module CanOrd = struct
+    type t = kernel_pair
+    let compare x y = KerName.compare (canonical x) (canonical y)
+    let equal x y = x == y || KerName.equal (canonical x) (canonical y)
+    let hash x = KerName.hash (canonical x)
+  end
+
   let canonize kp = match kp with
   | Same _ -> kp
-  | Dual (_, kn) -> Same kn
+  | Dual (_, kn) -> same kn
 
-  let same kn = Same kn
-  let make knu knc = if KerName.equal knu knc then Same knc else Dual (knu,knc)
 
   let make1 = same
   let make2 mp l = same (KerName.make mp l)
@@ -527,70 +613,10 @@ module KerPair = struct
       sense, according to your needs: user for the environments, canonical
       for other uses (ex: non-logical things). *)
 
-  module UserOrd = struct
-    type t = kernel_pair
-    let compare x y = KerName.compare (user x) (user y)
-    let equal x y = x == y || KerName.equal (user x) (user y)
-    let hash x = KerName.hash (user x)
-  end
-
-  module CanOrd = struct
-    type t = kernel_pair
-    let compare x y = KerName.compare (canonical x) (canonical y)
-    let equal x y = x == y || KerName.equal (canonical x) (canonical y)
-    let hash x = KerName.hash (canonical x)
-  end
-
-  module SyntacticOrd = struct
-    type t = kernel_pair
-    let compare x y = match x, y with
-      | Same knx, Same kny -> KerName.compare knx kny
-      | Dual (knux,kncx), Dual (knuy,kncy) ->
-        let c = KerName.compare knux knuy in
-        if not (Int.equal c 0) then c
-        else KerName.compare kncx kncy
-      | Same _, _ -> -1
-      | Dual _, _ -> 1
-    let equal x y = x == y || compare x y = 0
-    let hash = function
-      | Same kn -> KerName.hash kn
-      | Dual (knu, knc) ->
-        Hashset.Combine.combine (KerName.hash knu) (KerName.hash knc)
-  end
 
   (** Default (logical) comparison and hash is on the canonical part *)
   let equal = CanOrd.equal
   let hash = CanOrd.hash
-
-  module Self_Hashcons =
-    struct
-      type t = kernel_pair
-      let hashcons hkn = function
-        | Same kn -> Same (hkn kn)
-        | Dual (knu,knc) -> make (hkn knu) (hkn knc)
-      let eq x y = (* physical comparison on subterms *)
-        x == y ||
-        match x,y with
-        | Same x, Same y -> x == y
-        | Dual (ux,cx), Dual (uy,cy) -> ux == uy && cx == cy
-        | (Same _ | Dual _), _ -> false
-      (** Hash-consing (despite having the same user part implies having
-          the same canonical part is a logical invariant of the system, it
-          is not necessarily an invariant in memory, so we treat kernel
-          names as they are syntactically for hash-consing) *)
-    end
-
-  module Tbl = Hashset.Make(Self_Hashcons)
-
-  let tab = Tbl.create 97
-
-  let hcons c =
-    let h = SyntacticOrd.hash c in
-    match Tbl.lookup SyntacticOrd.equal h c tab with
-    | Some v -> v
-    | None ->
-      let v = Self_Hashcons.hashcons KerName.hcons c in
-      Tbl.repr h v tab
 
 end
 
