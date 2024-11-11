@@ -1144,6 +1144,7 @@ let record_steps () = CDebug.get_flag record_steps_flag
 (* future work: print percentages, print step counts in children
    nicer formatting (some kind of table?) *)
 let print_recorded_steps tab =
+  if CDebug.get_flag record_steps_flag then
   let steps = CClosure.get_recorded_steps tab in
   if CList.is_empty steps then ()
   else

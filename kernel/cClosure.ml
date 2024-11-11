@@ -453,7 +453,19 @@ module RedContext = struct
   let hash (a:t) = Option.hash (hash_list GlobRef.UserOrd.hash 0) a
 end
 
-module RedContextTbl = Hashtbl.Make(RedContext)
+module RedContextLst = struct
+  type t = (step_kind * current_context) list ref
+
+  let create : t = ref []
+  let to_list (v : t) = !v
+  let add (ctx : current_context) (s : step_kind) (v : t) =
+    v := (s,ctx) :: !v
+end
+
+
+module RedContextTbl = struct
+  include Hashtbl.Make(RedContext)
+end
 
 type recorded_steps = {
   mutable betas : int;
@@ -477,18 +489,32 @@ let add_step record : step_kind -> unit = function
 
 type clos_tab = {
   tab : Table.t;
-  recorded_steps : recorded_steps RedContextTbl.t option;
+  recorded_steps : RedContextLst.t option;
 }
 
 let create_tab ?(record_steps=false) () = {
   tab = Table.create ();
-  recorded_steps = if true || record_steps then Some (RedContextTbl.create 17) else None;
+  recorded_steps = if true || record_steps then Some (RedContextLst.create) else None;
 }
 
 let get_recorded_steps tab =
   match tab.recorded_steps with
   | None -> []
-  | Some record -> RedContextTbl.to_seq record |> List.of_seq
+  | Some record ->
+    let records = RedContextTbl.create 17 in
+    let update (step, ctx) =
+      let record =
+        match RedContextTbl.find_opt records ctx with
+        | Some record -> record
+        | None ->
+          let record = empty_recorded_steps () in
+          RedContextTbl.add records ctx record;
+          record
+      in
+      add_step record step
+    in
+    List.iter update (RedContextLst.to_list record);
+    RedContextTbl.to_seq records |> List.of_seq
 
 (************************************************************************)
 
@@ -1907,14 +1933,7 @@ let record_step tab flag ctx =
   let () = match tab.recorded_steps with
     | None -> ()
     | Some records ->
-      let record = match RedContextTbl.find_opt records ctx with
-        | Some record -> record
-        | None ->
-          let record = empty_recorded_steps () in
-          RedContextTbl.add records ctx record;
-          record
-      in
-      add_step record flag
+      RedContextLst.add ctx flag records
   in
   lazy_trace flag ctx
 
