@@ -482,7 +482,7 @@ type clos_tab = {
 
 let create_tab ?(record_steps=false) () = {
   tab = Table.create ();
-  recorded_steps = if record_steps then Some (RedContextTbl.create 17) else None;
+  recorded_steps = if true || record_steps then Some (RedContextTbl.create 17) else None;
 }
 
 let get_recorded_steps tab =
