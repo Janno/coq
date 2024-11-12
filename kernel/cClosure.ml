@@ -456,7 +456,7 @@ end
 module RedContextLst = struct
   type t = (step_kind * current_context) list ref
 
-  let create : t = ref []
+  let create () : t = ref []
   let to_list (v : t) = !v
   let add (ctx : current_context) (s : step_kind) (v : t) =
     v := (s,ctx) :: !v
@@ -494,7 +494,7 @@ type clos_tab = {
 
 let create_tab ?(record_steps=false) () = {
   tab = Table.create ();
-  recorded_steps = if true || record_steps then Some (RedContextLst.create) else None;
+  recorded_steps = if true || record_steps then Some (RedContextLst.create ()) else None;
 }
 
 let get_recorded_steps tab =
