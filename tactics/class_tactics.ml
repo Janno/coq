@@ -643,7 +643,8 @@ module Search = struct
             tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "Next!"))) >>= fun () ->
             fixpoint true tacs stuck (fun e ->
                 tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "Backtracking goal " ++ int glid))) >>= fun () ->
-                Proofview.Unsafe.tclNEWGOALS ~before:true [Proofview.with_empty_state ev] <*>
+                (* the line below does nothing?? *)
+                (* Proofview.Unsafe.tclNEWGOALS ~before:true [Proofview.with_empty_state ev] <*> *)
                 pr_goals ~ev_extra:Pp.(fun ev -> str "goal id: " ++ int (snd @@ Evar.Map.get ev !glinfo)) (str "Goals after backtracking: ") <*>
                 tclCASE (fk' e) >>= kont
               )
