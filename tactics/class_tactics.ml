@@ -539,16 +539,21 @@ module Search = struct
   exception NonStuckFailure
   (* exception Backtrack *)
 
-  let pr_goals s =
+  let pr_goals ?(ev_extra) s =
     let open Proofview in
     if get_debug() > 1 then
       tclEVARMAP >>= fun sigma ->
       Unsafe.tclGETGOALS >>= fun gls ->
       let gls = CList.map Proofview.drop_state gls in
       let j = List.length gls in
-      let pr_goal gl = pr_ev_with_id sigma gl in
+      let pr_goal =
+        match ev_extra with
+        | None -> fun gl -> pr_ev_with_id sigma gl
+        | Some ev_extra ->
+          fun gl -> pr_ev_with_id sigma gl ++ str " (" ++ ev_extra gl ++ str ")"
+      in
       Feedback.msg_debug
-        (s ++ int j ++ str" goals:" ++ spc () ++
+        (s ++ int j ++ str" goals:" ++ fnl () ++
          prlist_with_sep Pp.fnl pr_goal gls);
       tclUNIT ()
     else
@@ -585,20 +590,25 @@ module Search = struct
     | IsNonStuckFailure -> str "stuck failure"
 
 
-  let pr_search_goal sigma (glid, ev, status, _) =
+  let pr_search_goal env sigma (glid, ev, status, _) =
     str"Goal " ++ int glid ++ str" evar: " ++ Evar.print ev ++ str " status: " ++ pr_goal_status status
+    (* ++ str ", type: " ++ Printer.pr_econstr_env env sigma (Evd.existential_type sigma (ev, SList.empty)) *)
 
-  let pr_search_goals sigma =
-    prlist_with_sep fnl (pr_search_goal sigma)
+  let pr_search_goals env sigma =
+    prlist_with_sep fnl (pr_search_goal env sigma)
 
   let search_fixpoint ~best_effort ~allow_out_of_order tacs =
     let open Pp in
     let open Proofview in
     let open Proofview.Notations in
+    Proofview.tclENV >>= fun env ->
+    Proofview.tclEVARMAP >>= fun sigma ->
+    tclLIFT (NonLogical.make (fun () -> ref Evar.Map.empty)) >>= fun glinfo ->
     let rec fixpoint progress tacs stuck fk =
+      tclLIFT (NonLogical.make (fun () ->ppdebug 1 Pp.(fun () -> str "stuck: " ++ prlist_with_sep (fun () -> str ", ") (fun (glid, _, _, _) -> int glid) stuck))) >>= fun () ->
       let next (glid, ev, status, tac) tacs stuck =
         let () = ppdebug 1 (fun () ->
-            str "considering goal " ++ int glid ++
+            str "considering goal " ++ int glid ++ str " = ?" ++ int (Evar.repr ev) ++ str " : " ++ Printer.pr_constr_env env sigma (fst @@ Evar.Map.get ev !glinfo) ++
             str " of status " ++ pr_goal_status status)
         in
         let rec kont = function
@@ -613,6 +623,7 @@ module Search = struct
               | StuckGoal -> IsStuckGoal
               | _ -> assert false
             in
+            tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "Cycling; progress: " ++ bool progress ++ str "; #tacs: " ++ int (List.length tacs)))) >>= fun () ->
             cycle 1 (* Puts the first goal last *) <*>
             fixpoint progress tacs ((glid, ev, status, tac) :: stuck) fk (* Launches the search on the rest of the goals *)
           | Fail ie ->
@@ -629,37 +640,54 @@ module Search = struct
                 we backtrack to the next result of tac, etc.... Ultimately if none of the solutions
                 for tac work, we will come back to the failure continuation fk in one of
                 the above cases *)
-            fixpoint true tacs stuck (fun e -> tclCASE (fk' e) >>= kont)
-        in tclCASE tac >>= kont
+            tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "Next!"))) >>= fun () ->
+            fixpoint true tacs stuck (fun e ->
+                tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "Backtracking goal " ++ int glid))) >>= fun () ->
+                Proofview.Unsafe.tclNEWGOALS ~before:true [Proofview.with_empty_state ev] <*>
+                pr_goals ~ev_extra:Pp.(fun ev -> str "goal id: " ++ int (snd @@ Evar.Map.get ev !glinfo)) (str "Goals after backtracking: ") <*>
+                tclCASE (fk' e) >>= kont
+              )
+        in
+        tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "Running tac on goal " ++ int glid))) >>= fun () ->
+        tclCASE tac >>= kont
       in
-      tclEVARMAP >>= fun sigma ->
       let () = ppdebug 1 (fun () ->
           let stuck, failed = List.partition (fun (_, _, status, _) -> status = IsStuckGoal) stuck in
           str"Calling fixpoint on : " ++
           int (List.length tacs) ++ str" initial goals" ++
           str", " ++ int (List.length stuck) ++ str" stuck goals" ++
           str" and " ++ int (List.length failed) ++ str" non-stuck failures kept" ++
-          str" with " ++ str(if progress then "" else "no ") ++
+          str" with " ++ str(if progress then "some " else "no ") ++
           str"progress made in this run." ++ fnl () ++
-          str "Stuck: " ++ pr_search_goals sigma stuck ++ fnl () ++
-          str "Failed: " ++ pr_search_goals sigma failed ++ fnl () ++
-          str "Initial: " ++ pr_search_goals sigma tacs)
+          str "Stuck: " ++ fnl () ++ pr_search_goals env sigma stuck ++ fnl () ++
+          str "Failed: " ++ fnl () ++ pr_search_goals env sigma failed ++ fnl () ++
+          str "Initial: " ++ fnl () ++ pr_search_goals env sigma tacs)
       in
       tclCHECKINTERRUPT <*>
+      pr_goals ~ev_extra:Pp.(fun ev -> str "goal id: " ++ int (snd @@ Evar.Map.get ev !glinfo)) (str "Goals at fixpoint iteration: ") <*>
       match tacs with
-      | tac :: tacs -> next tac tacs stuck
+      | tac :: tacs ->
+        tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "More tacs; #tacs: 1 + " ++ int (List.length tacs)))) >>= fun () ->
+        next tac tacs stuck
       | [] -> (* All remaining goals are stuck *)
         match stuck with
         | [] ->
             (* We found a solution! Great, but in case it's not good for the rest of the proof search,
                we might have other solutions available through fk. *)
+          tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "No more stuck goals; running fk"))) >>= fun () ->
             tclOR (tclUNIT ()) fk
         | stuck ->
-          if progress then fixpoint false stuck [] fk
+          if progress then begin
+            tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "Made progress; redoing stuck goals."))) >>= fun () ->
+            fixpoint false stuck [] fk
+          end
           else (* No progress can be made on the stuck goals arising from this resolution,
             try a different solution on the non-stuck goals, if any. *)
           begin
-            tclORELSE (fk (NoApplicableHint, Exninfo.null))
+            tclORELSE (
+              tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "No progress; running fk."))) >>= fun () ->
+              fk (NoApplicableHint, Exninfo.null)
+            )
               (fun (e, info) ->
                  let () = ppdebug 1 (fun () -> int (List.length stuck) ++ str " remaining goals left, no progress, calling continuation failed")
                  in
@@ -692,7 +720,13 @@ module Search = struct
       It might happen that an initial goal is solved during the resolution of another goal,
       hence the `tclUNIT` in case there is no goal for the tactic to apply anymore. *)
     let tacs = List.map2_i
-      (fun i gls tac -> (succ i, Proofview.drop_state gls, IsInitial, tclFOCUS ~nosuchgoal:(tclUNIT ()) 1 1 tac))
+      (fun i gl tac ->
+        let ev = Proofview.drop_state gl in
+        glinfo := Evar.Map.add ev (EConstr.to_constr ~abort_on_undefined_evars:false sigma @@ Evd.existential_type sigma (ev, SList.empty), succ i) (!glinfo);
+        let tac = tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "Running tac meant for goal " ++ int (succ i)))) >>=
+          fun () -> tclFOCUS ~nosuchgoal:(tclUNIT ()) 1 1 tac
+        in
+        (succ i, ev, IsInitial, tac))
       0 gls tacs
     in
     fixpoint false tacs [] (fun (e, info) -> tclZERO ~info e) <*>
@@ -905,9 +939,14 @@ module Search = struct
       Proofview.tclZERO ~info ReachedLimit
     else
       Proofview.tclOR (hints_tac hints info kont)
-                      (fun e -> Proofview.tclOR (intro info kont)
-                      (fun e' -> let (e, info) = merge_exceptions e e' in
-                              Proofview.tclZERO ~info e))
+                      (fun e ->
+          let open Proofview in
+          tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "search_tac (rec) failed"))) >>= fun () ->
+            Proofview.tclOR (intro info kont)
+                          (fun e' ->
+          tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "search_tac (rec, intro) failed"))) >>= fun () ->
+                  let (e, info) = merge_exceptions e e' in
+                            Proofview.tclZERO ~info e))
 
   let search_tac_gl mst only_classes dep hints best_effort depth i sigma gls gl :
         unit Proofview.tactic =
@@ -922,6 +961,7 @@ module Search = struct
     let tac sigma gls i =
       Goal.enter
         begin fun gl ->
+          tclLIFT (NonLogical.make (fun () -> ppdebug 1 Pp.(fun () -> str "search_tac index: " ++ int (succ i)))) >>= fun () ->
           search_tac_gl mst only_classes dep hints best_effort depth (succ i) sigma gls gl end
     in
       Proofview.Unsafe.tclGETGOALS >>= fun gls ->
