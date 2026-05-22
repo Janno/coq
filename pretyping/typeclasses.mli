@@ -134,6 +134,10 @@ val set_solve_all_instances : (env -> evar_map -> evar_filter -> bool -> bool ->
 
 val get_typeclasses_unique_solutions : unit -> bool
 
+val class_uses_evarconv : env -> GlobRef.t -> bool
+(** Whether a class should use evarconv unification according to the default
+    flag and the [Typeclass Evarconv]/[Typeclass Legacy] override tables. *)
+
 val is_maybe_class_type : env -> evar_map -> EConstr.types -> bool
 
 (* Deprecated *)

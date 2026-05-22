@@ -30,7 +30,7 @@ let { Goptions.get = get_typeclasses_unique_solutions } =
     ~value:false
     ()
 
-let _ =
+let { Goptions.get = get_typeclasses_default_unification_evarconv } =
   Goptions.declare_bool_option_and_ref
     ~key:["Typeclasses";"Default";"Unification";"Evarconv"]
     ~value:true
@@ -193,6 +193,83 @@ let instances_exn env sigma r =
 
 let is_class env gr =
   GlobRefMap.mem env gr !classes
+
+module TypeclassTableArg (T : sig
+    val field : string
+    val title : string
+    val member_message : Pp.t -> bool -> Pp.t
+  end) = struct
+  type t = GlobRef.t
+  module Set = GlobRef.Set_env
+
+  let encode env r =
+    let gr = Environ.QGlobRef.canonize env (Nametab.global r) in
+    if not (is_class env gr) then
+      CErrors.user_err
+        Pp.(Nametab.pr_global_env Id.Set.empty gr ++ str " is not a typeclass.");
+    gr
+
+  let subst subst gr =
+    GlobRef.canonize (Globnames.subst_global_reference subst gr)
+
+  let check_local local = function
+    | GlobRef.VarRef id ->
+      begin match local with
+      | Libobject.Local -> ()
+      | Libobject.Export | Libobject.SuperGlobal ->
+        let locality = match local with
+          | Libobject.Export -> "export"
+          | Libobject.SuperGlobal -> "global"
+          | Libobject.Local -> assert false
+        in
+        CErrors.user_err
+          Pp.(Id.print id ++ str " cannot be added with locality " ++ str locality ++ str ".")
+      end
+    | GlobRef.ConstRef _ | GlobRef.IndRef _ | GlobRef.ConstructRef _ -> ()
+
+  let discharge = function
+    | GlobRef.VarRef _ as gr -> assert (not (Global.is_in_section gr)); gr
+    | gr -> gr
+
+  let printer gr = Nametab.pr_global_env Id.Set.empty gr
+  let key = ["Typeclass"; T.field]
+  let title = T.title
+  let member_message gr = T.member_message (printer gr)
+end
+
+module TypeclassEvarconvArg = TypeclassTableArg (struct
+  let field = "Evarconv"
+  let title = "Typeclasses using evarconv unification"
+  let member_message gr b =
+    let open Pp in
+    str "Typeclass " ++ gr ++
+    str (if b then
+      " uses evarconv unification"
+    else
+      " does not use evarconv unification")
+end)
+
+module TypeclassLegacyArg = TypeclassTableArg (struct
+  let field = "Legacy"
+  let title = "Typeclasses using legacy unification"
+  let member_message gr b =
+    let open Pp in
+    str "Typeclass " ++ gr ++
+    str (if b then
+      " uses legacy unification"
+    else
+      " does not use legacy unification")
+end)
+
+module TypeclassEvarconv = Goptions.MakeRefTable (TypeclassEvarconvArg)
+module TypeclassLegacy = Goptions.MakeRefTable (TypeclassLegacyArg)
+
+let class_uses_evarconv env gr =
+  let gr = Environ.QGlobRef.canonize env gr in
+  match TypeclassEvarconv.active gr, TypeclassLegacy.active gr with
+  | true, false -> true
+  | false, false -> get_typeclasses_default_unification_evarconv ()
+  | _, true -> false
 
 open Evar_kinds
 type evar_filter = Evar.t -> Evar_kinds.t Lazy.t -> bool

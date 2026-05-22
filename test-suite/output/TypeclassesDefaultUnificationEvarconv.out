@@ -1,3 +1,7 @@
 Typeclasses Default Unification Evarconv is on
 Typeclasses Default Unification Evarconv is off
 Typeclasses Default Unification Evarconv is on
+Typeclasses using evarconv unification: EvarconvTableTest.
+Typeclasses using evarconv unification is empty.
+Typeclasses using legacy unification: EvarconvTableTest.
+Typeclasses using legacy unification is empty.
