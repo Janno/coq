@@ -36,3 +36,14 @@ Add Typeclass Legacy EvarconvTableTest.
 Print Table Typeclass Legacy.
 Remove Typeclass Legacy EvarconvTableTest.
 Print Table Typeclass Legacy.
+
+Unset Typeclasses Default Unification Evarconv.
+Class EvarconvResolutionTest : Prop := {}.
+Add Typeclass Evarconv EvarconvResolutionTest.
+#[export] Instance evarconv_resolution_test : EvarconvResolutionTest := {}.
+Set Typeclasses Debug.
+Goal EvarconvResolutionTest.
+Proof.
+  typeclasses eauto.
+Qed.
+Unset Typeclasses Debug.

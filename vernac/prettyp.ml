@@ -1059,7 +1059,10 @@ let print_notation env sigma entry raw_ntn =
 (** Command [About] *)
 
 let print_typeclass_hint_unification env ref =
-  if Typeclasses.is_class env ref then
+  if Typeclasses.is_class env ref &&
+     (Typeclasses.get_typeclasses_default_unification_evarconv () ||
+      Typeclasses.class_unification_is_overridden env ref)
+  then
     let uses_evarconv = Typeclasses.class_uses_evarconv env ref in
     let reason = Typeclasses.explain_class_uses_evarconv env ref in
     [hov 0 (pr_global ref ++ str " uses " ++

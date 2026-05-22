@@ -134,6 +134,16 @@ val set_solve_all_instances : (env -> evar_map -> evar_filter -> bool -> bool ->
 
 val get_typeclasses_unique_solutions : unit -> bool
 
+val get_typeclasses_default_unification_evarconv : unit -> bool
+
+val class_of_instance : env -> GlobRef.t -> GlobRef.t option
+(** [class_of_instance env gr] is the class implemented by [gr], if [gr] is a
+    known typeclass instance. *)
+
+val class_unification_is_overridden : env -> GlobRef.t -> bool
+(** Whether the class is listed in the [Typeclass Evarconv] or
+    [Typeclass Legacy] override tables. *)
+
 val class_uses_evarconv : env -> GlobRef.t -> bool
 (** Whether a class should use evarconv unification according to the default
     flag and the [Typeclass Evarconv]/[Typeclass Legacy] override tables. *)

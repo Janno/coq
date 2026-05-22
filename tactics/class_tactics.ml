@@ -153,12 +153,18 @@ let auto_unif_flags ?(allowed_evars = Evarsolve.AllowedEvars.all) st =
     resolve_evars = false
 }
 
-let e_give_exact flags h =
-  Hints.hint_res_pf ~with_evars:false ~with_classes:false ~flags h
+let res_pf ~uses_evarconv ?with_evars ?with_classes ?flags clenv =
+  if uses_evarconv then
+    Refined_clenv.res_pf ?with_evars ?with_classes ?flags clenv
+  else
+    Clenv.res_pf ?with_evars ?with_classes ?flags clenv
 
-let unify_resolve ~with_evars flags h diff = match diff with
+let e_give_exact ~uses_evarconv flags h =
+  Hints.hint_res_pf ~uses_evarconv ~with_evars:false ~with_classes:false ~flags h
+
+let unify_resolve ~uses_evarconv ~with_evars flags h diff = match diff with
 | None ->
-  Hints.hint_res_pf ~with_evars ~with_classes:false ~flags h
+  Hints.hint_res_pf ~uses_evarconv ~with_evars ~with_classes:false ~flags h
 | Some (diff, ty) ->
   let () = assert (Option.is_empty (fst @@ hint_as_term @@ h)) in
   Proofview.Goal.enter begin fun gl ->
@@ -166,7 +172,7 @@ let unify_resolve ~with_evars flags h diff = match diff with
   let sigma = Proofview.Goal.sigma gl in
   let sigma, c = Hints.fresh_hint env sigma h in
   let clenv = Clenv.mk_clenv_from_n env sigma diff (c, ty) in
-  Clenv.res_pf ~with_evars ~with_classes:false ~flags clenv
+  res_pf ~uses_evarconv ~with_evars ~with_classes:false ~flags clenv
   end
 
 (** Dealing with goals of the form A -> B and hints of the form
@@ -276,21 +282,22 @@ and e_my_find_search db_list local_db secvars hdc complete env sigma concl0 =
   in
   let tac_of_hint (flags,h) =
     let name = FullHint.name h in
+    let uses_evarconv = FullHint.uses_evarconv env h in
     let tac = function
       | Res_pf h ->
         let tac =
-          with_prods nprods h (unify_resolve ~with_evars:false flags h) in
+          with_prods nprods h (unify_resolve ~uses_evarconv ~with_evars:false flags h) in
         Proofview.tclBIND (Proofview.with_shelf tac)
           (fun (gls, ()) -> shelve_dependencies gls)
       | ERes_pf h ->
         let tac =
-          with_prods nprods h (unify_resolve ~with_evars:true flags h) in
+          with_prods nprods h (unify_resolve ~uses_evarconv ~with_evars:true flags h) in
         Proofview.tclBIND (Proofview.with_shelf tac)
           (fun (gls, ()) -> shelve_dependencies gls)
       | Give_exact h ->
-        e_give_exact flags h
+        e_give_exact ~uses_evarconv flags h
       | Res_pf_THEN_trivial_fail h ->
-        let fst = with_prods nprods h (unify_resolve ~with_evars:true flags h) in
+        let fst = with_prods nprods h (unify_resolve ~uses_evarconv ~with_evars:true flags h) in
         let snd = if complete then Tacticals.tclIDTAC
           else e_trivial_fail_db db_list local_db secvars in
         Tacticals.tclTHEN fst snd
@@ -1379,9 +1386,15 @@ let autoapply c i =
     (Hints.Hint_db.transparent_state hintdb) in
   let env = Proofview.Goal.env gl in
   let sigma = Proofview.Goal.sigma gl in
+  let concl = Proofview.Goal.concl gl in
+  let uses_evarconv =
+    match Typeclasses.class_of_constr env sigma concl with
+    | Some (_, ((cl, _), _)) -> Typeclasses.class_uses_evarconv env cl.cl_impl
+    | None -> Typeclasses.get_typeclasses_default_unification_evarconv ()
+  in
   let cty = Retyping.get_type_of env sigma c in
   let ce = Clenv.mk_clenv_from env sigma (c,cty) in
-  Clenv.res_pf ~with_evars:true ~with_classes:false ~flags ce <*>
+  res_pf ~uses_evarconv ~with_evars:true ~with_classes:false ~flags ce <*>
       Proofview.tclEVARMAP >>= (fun sigma ->
       let sigma = Typeclasses.make_unresolvables
           (fun ev -> Typeclasses.all_goals ev (Lazy.from_val (snd (Evd.evar_source (Evd.find_undefined sigma ev))))) sigma in

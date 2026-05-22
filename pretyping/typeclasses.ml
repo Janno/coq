@@ -33,7 +33,7 @@ let { Goptions.get = get_typeclasses_unique_solutions } =
 let { Goptions.get = get_typeclasses_default_unification_evarconv } =
   Goptions.declare_bool_option_and_ref
     ~key:["Typeclasses";"Default";"Unification";"Evarconv"]
-    ~value:true
+    ~value:false
     ()
 
 type class_method = {
@@ -191,6 +191,15 @@ let instances_exn env sigma r =
     let sigma, c = Evd.fresh_global env sigma r in
     not_a_class env sigma c
 
+let class_of_instance env gr =
+  let gr = Environ.QGlobRef.canonize env gr in
+  let fold_instance inst accu =
+    if Option.has_some accu then accu
+    else if Environ.QGlobRef.equal env inst.is_impl gr then Some inst.is_class
+    else None
+  in
+  List.fold_right fold_instance (all_instances ()) None
+
 let is_class env gr =
   GlobRefMap.mem env gr !classes
 
@@ -267,6 +276,11 @@ module TypeclassLegacy = Goptions.MakeRefTable (TypeclassLegacyArg)
 let class_unification_evarconv_state env gr =
   let gr = Environ.QGlobRef.canonize env gr in
   TypeclassEvarconv.active gr, TypeclassLegacy.active gr
+
+let class_unification_is_overridden env gr =
+  match class_unification_evarconv_state env gr with
+  | true, _ | _, true -> true
+  | false, false -> false
 
 let class_uses_evarconv env gr =
   match class_unification_evarconv_state env gr with

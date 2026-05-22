@@ -1790,6 +1790,12 @@ struct
   let run (h : t) k = k (to_user_ast h.code.obj)
   let print env sigma (h : t) = pr_hint env sigma h.code
   let name (h : t) = h.name
+  let uses_evarconv env (h : t) =
+    match h.name with
+    | None -> Typeclasses.get_typeclasses_default_unification_evarconv ()
+    | Some gr ->
+      let gr = Option.default gr (Typeclasses.class_of_instance env gr) in
+      Typeclasses.class_uses_evarconv env gr
 
   let subgoals (h : t) = match h.code.obj with
   | Res_pf h | ERes_pf h | Give_exact h | Res_pf_THEN_trivial_fail h -> Some h.hint_arty
@@ -1819,8 +1825,9 @@ let fresh_hint env sigma h =
     let sigma = Evd.merge_sort_context_set Evd.univ_flexible ~src:UState.Internal sigma ctx in
     sigma, c
 
-let hint_res_pf ?with_evars ?with_classes ?flags h =
+let hint_res_pf ?(uses_evarconv=false) ?with_evars ?with_classes ?flags h =
   Proofview.Goal.enter begin fun gl ->
     let clenv = connect_hint_clenv h gl in
-    Clenv.res_pf ?with_evars ?with_classes ?flags clenv
+    let res_pf = if uses_evarconv then Refined_clenv.res_pf else Clenv.res_pf in
+    res_pf ?with_evars ?with_classes ?flags clenv
   end

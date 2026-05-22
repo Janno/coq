@@ -59,6 +59,7 @@ sig
   val database : t -> string option
   val run : t -> (hint_ast -> 'r Proofview.tactic) -> 'r Proofview.tactic
   val name : t -> GlobRef.t option
+  val uses_evarconv : env -> t -> bool
   val print : env -> evar_map -> t -> Pp.t
   val subgoals : t -> int option
 
@@ -224,8 +225,9 @@ val make_db_list : hint_db_name list -> hint_db list
 
 val fresh_hint : env -> evar_map -> hint -> evar_map * constr
 
-val hint_res_pf : ?with_evars:bool -> ?with_classes:bool ->
-  ?flags:Unification.unify_flags -> hint -> unit Proofview.tactic
+val hint_res_pf : ?uses_evarconv:bool -> ?with_evars:bool ->
+  ?with_classes:bool -> ?flags:Unification.unify_flags ->
+  hint -> unit Proofview.tactic
 
 (** Printing  hints *)
 
