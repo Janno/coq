@@ -1058,6 +1058,15 @@ let print_notation env sigma entry raw_ntn =
 
 (** Command [About] *)
 
+let print_typeclass_hint_unification env ref =
+  if Typeclasses.is_class env ref then
+    let uses_evarconv = Typeclasses.class_uses_evarconv env ref in
+    let reason = Typeclasses.explain_class_uses_evarconv env ref in
+    [hov 0 (pr_global ref ++ str " uses " ++
+      str (if uses_evarconv then "evarconv" else "legacy") ++
+      str " unification for hint applications. (" ++ str reason ++ str ")")]
+  else []
+
 let print_about_global_reference ?loc env ref udecl =
   pr_infos_list
    (print_ref env false ref udecl :: blankline ::
@@ -1067,6 +1076,7 @@ let print_about_global_reference ?loc env ref udecl =
     print_reduction_behaviour ref @
     print_opacity env ref @
     print_bidi_hints env ref @
+    print_typeclass_hint_unification env ref @
     [hov 0 (str "Expands to: " ++ pr_located_qualid env (Term ref)) ++
     loc_info (TrueGlobal ref)])
 

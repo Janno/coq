@@ -4,6 +4,27 @@ Test Typeclasses Default Unification Evarconv.
 Set Typeclasses Default Unification Evarconv.
 Test Typeclasses Default Unification Evarconv.
 
+Class EvarconvAboutTest : Prop := {}.
+
+About EvarconvAboutTest.
+
+Unset Typeclasses Default Unification Evarconv.
+About EvarconvAboutTest.
+
+Add Typeclass Evarconv EvarconvAboutTest.
+About EvarconvAboutTest.
+
+Remove Typeclass Evarconv EvarconvAboutTest.
+Set Typeclasses Default Unification Evarconv.
+Add Typeclass Legacy EvarconvAboutTest.
+About EvarconvAboutTest.
+
+Add Typeclass Evarconv EvarconvAboutTest.
+About EvarconvAboutTest.
+
+Remove Typeclass Evarconv EvarconvAboutTest.
+Remove Typeclass Legacy EvarconvAboutTest.
+
 Class EvarconvTableTest : Prop := {}.
 
 Add Typeclass Evarconv EvarconvTableTest.

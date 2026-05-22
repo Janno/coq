@@ -1,6 +1,41 @@
 Typeclasses Default Unification Evarconv is on
 Typeclasses Default Unification Evarconv is off
 Typeclasses Default Unification Evarconv is on
+EvarconvAboutTest : Prop
+
+EvarconvAboutTest is not universe polymorphic
+EvarconvAboutTest uses evarconv unification for hint applications. (Typeclasses Default Unification Evarconv is enabled, and the class is listed in neither the Typeclass Evarconv table nor the Typeclass Legacy table)
+Expands to: Inductive TypeclassesDefaultUnificationEvarconv.EvarconvAboutTest
+Declared in
+library TypeclassesDefaultUnificationEvarconv, line 7, characters 6-23
+EvarconvAboutTest : Prop
+
+EvarconvAboutTest is not universe polymorphic
+EvarconvAboutTest uses legacy unification for hint applications. (Typeclasses Default Unification Evarconv is disabled, and the class is listed in neither the Typeclass Evarconv table nor the Typeclass Legacy table)
+Expands to: Inductive TypeclassesDefaultUnificationEvarconv.EvarconvAboutTest
+Declared in
+library TypeclassesDefaultUnificationEvarconv, line 7, characters 6-23
+EvarconvAboutTest : Prop
+
+EvarconvAboutTest is not universe polymorphic
+EvarconvAboutTest uses evarconv unification for hint applications. (The class is listed in the Typeclass Evarconv table)
+Expands to: Inductive TypeclassesDefaultUnificationEvarconv.EvarconvAboutTest
+Declared in
+library TypeclassesDefaultUnificationEvarconv, line 7, characters 6-23
+EvarconvAboutTest : Prop
+
+EvarconvAboutTest is not universe polymorphic
+EvarconvAboutTest uses legacy unification for hint applications. (The class is listed in the Typeclass Legacy table)
+Expands to: Inductive TypeclassesDefaultUnificationEvarconv.EvarconvAboutTest
+Declared in
+library TypeclassesDefaultUnificationEvarconv, line 7, characters 6-23
+EvarconvAboutTest : Prop
+
+EvarconvAboutTest is not universe polymorphic
+EvarconvAboutTest uses legacy unification for hint applications. (The class is listed in both the Typeclass Evarconv and Typeclass Legacy tables, and Typeclass Legacy takes precedence)
+Expands to: Inductive TypeclassesDefaultUnificationEvarconv.EvarconvAboutTest
+Declared in
+library TypeclassesDefaultUnificationEvarconv, line 7, characters 6-23
 Typeclasses using evarconv unification: EvarconvTableTest.
 Typeclasses using evarconv unification is empty.
 Typeclasses using legacy unification: EvarconvTableTest.

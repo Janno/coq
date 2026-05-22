@@ -264,12 +264,35 @@ end)
 module TypeclassEvarconv = Goptions.MakeRefTable (TypeclassEvarconvArg)
 module TypeclassLegacy = Goptions.MakeRefTable (TypeclassLegacyArg)
 
-let class_uses_evarconv env gr =
+let class_unification_evarconv_state env gr =
   let gr = Environ.QGlobRef.canonize env gr in
-  match TypeclassEvarconv.active gr, TypeclassLegacy.active gr with
+  TypeclassEvarconv.active gr, TypeclassLegacy.active gr
+
+let class_uses_evarconv env gr =
+  match class_unification_evarconv_state env gr with
   | true, false -> true
   | false, false -> get_typeclasses_default_unification_evarconv ()
   | _, true -> false
+
+let explain_class_uses_evarconv env gr =
+  match class_unification_evarconv_state env gr with
+  | true, false ->
+    "The class is listed in the Typeclass Evarconv table"
+  | true, true ->
+    "The class is listed in both the Typeclass Evarconv " ^
+    "and Typeclass Legacy tables, " ^
+    "and Typeclass Legacy takes precedence"
+  | false, true ->
+    "The class is listed in the Typeclass Legacy table"
+  | false, false ->
+    if get_typeclasses_default_unification_evarconv () then
+      "Typeclasses Default Unification Evarconv is enabled, " ^
+      "and the class is listed in neither the Typeclass Evarconv table " ^
+      "nor the Typeclass Legacy table"
+    else
+      "Typeclasses Default Unification Evarconv is disabled, " ^
+      "and the class is listed in neither the Typeclass Evarconv table " ^
+      "nor the Typeclass Legacy table"
 
 open Evar_kinds
 type evar_filter = Evar.t -> Evar_kinds.t Lazy.t -> bool

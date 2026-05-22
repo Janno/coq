@@ -138,6 +138,9 @@ val class_uses_evarconv : env -> GlobRef.t -> bool
 (** Whether a class should use evarconv unification according to the default
     flag and the [Typeclass Evarconv]/[Typeclass Legacy] override tables. *)
 
+val explain_class_uses_evarconv : env -> GlobRef.t -> string
+(** Human-readable explanation for [class_uses_evarconv]. *)
+
 val is_maybe_class_type : env -> evar_map -> EConstr.types -> bool
 
 (* Deprecated *)
