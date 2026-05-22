@@ -30,6 +30,12 @@ let { Goptions.get = get_typeclasses_unique_solutions } =
     ~value:false
     ()
 
+let _ =
+  Goptions.declare_bool_option_and_ref
+    ~key:["Typeclasses";"Default";"Unification";"Evarconv"]
+    ~value:true
+    ()
+
 type class_method = {
   meth_name : Name.t;
   meth_const : Constant.t option;
