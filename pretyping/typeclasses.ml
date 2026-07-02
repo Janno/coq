@@ -33,7 +33,7 @@ let { Goptions.get = get_typeclasses_unique_solutions } =
 let { Goptions.get = get_typeclasses_default_unification_evarconv } =
   Goptions.declare_bool_option_and_ref
     ~key:["Typeclasses";"Default";"Unification";"Evarconv"]
-    ~value:false
+    ~value:true
     ()
 
 type class_method = {

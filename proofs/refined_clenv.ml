@@ -46,6 +46,7 @@ let replace_clenv_metas env sigma clenv =
     | None ->
       let tymeta = Metas.meta_ftype metas mv in
       let ty = subst_meta sigma metamap tymeta.rebus in
+      let ty = Reductionops.nf_betaiota env sigma ty in
       let src = Metas.evar_source_of_meta mv metas in
       let naming = match Metas.meta_name metas mv with
         | Name na -> Namegen.IntroIdentifier na
@@ -80,21 +81,81 @@ let current_evar_set evars =
     (fun accu { cevar; _ } -> Evar.Set.add cevar accu)
     Evar.Set.empty evars
 
-let classify_evars sigma typ value evars =
+(* Like [Evd.evars_of_term], but without unfolding defined evars.  For
+   deciding which clenv evars correspond to actual subgoals, we want the
+   syntactic dependencies of the clause after evarconv, not dependencies hidden
+   behind assignments made to unrelated evars during goal unification. *)
+let evars_of_term c =
+  let rec evrec acc c =
+    match Constr.kind c with
+    | Evar (evk, args) ->
+      Evar.Set.add evk (SList.Skip.fold evrec acc args)
+    | _ -> Constr.fold evrec acc c
+  in
+  evrec Evar.Set.empty (EConstr.Unsafe.to_constr c)
+
+let evar_deps sigma current_set evk =
+  let evi = Evd.find_undefined sigma evk in
+  Evar.Set.inter current_set (evars_of_term (Evd.evar_concl evi))
+
+let evar_deps_list sigma current_set evars =
+  List.fold_left
+    (fun deps { cevar; _ } -> Evar.Set.union deps (evar_deps sigma current_set cevar))
+    Evar.Set.empty evars
+
+let close_evar_deps sigma current_set seeds =
+  let rec loop seen todo =
+    match todo with
+    | [] -> seen
+    | evk :: todo ->
+      let deps = Evar.Set.diff (evar_deps sigma current_set evk) seen in
+      let seen = Evar.Set.union seen deps in
+      loop seen (Evar.Set.elements deps @ todo)
+  in
+  loop seeds (Evar.Set.elements seeds)
+
+(* A clenv meta should become a proofview goal when it corresponds to an
+   ordinary argument of the applied hint, or when it is an actual typeclass
+   goal.  Non-class evars that only parameterize such goals must remain
+   evars: typeclass search can instantiate them when solving the goal they
+   parameterize, and exposing them as goals leads to spurious searches such as
+   goals of type [Type] or [relation A]. *)
+let classify_evars env sigma typ value evars =
   let current = advance_meta_evars sigma evars in
   let current_set = current_evar_set current in
-  let value_set = Evar.Set.inter current_set (Evd.evars_of_term sigma value) in
-  let deps = Evar.Set.inter current_set (Evd.evars_of_term sigma typ) in
-  let deps =
-    List.fold_left (fun deps { cevar; _ } ->
+  let value_set = Evar.Set.inter current_set (evars_of_term value) in
+  let deps = Evar.Set.inter current_set (evars_of_term typ) in
+  let deps = Evar.Set.union deps (evar_deps_list sigma current_set current) in
+  let goals =
+    List.filter (fun { cevar; _ } ->
       let evi = Evd.find_undefined sigma cevar in
-      let evars = Evd.evars_of_term sigma (Evd.evar_concl evi) in
-      Evar.Set.union deps (Evar.Set.inter current_set evars))
-      deps current
+      Typeclasses.is_class_evar env sigma evi ||
+      (Evar.Set.mem cevar value_set && not (Evar.Set.mem cevar deps)))
+      current
   in
-  List.partition (fun { cevar; _ } ->
-    Evar.Set.mem cevar value_set && not (Evar.Set.mem cevar deps))
-    current
+  let goal_set = current_evar_set goals in
+  let protected = close_evar_deps sigma current_set goal_set in
+  let unresolved =
+    List.filter (fun { cevar; _ } ->
+      Evar.Set.mem cevar value_set &&
+      not (Evar.Set.mem cevar protected))
+      current
+  in
+  goals, unresolved
+
+let normalize_meta_evar_info sigma evars =
+  let current = advance_meta_evars sigma evars in
+  let current_set = current_evar_set current in
+  Evd.raw_map_undefined (fun evk evi ->
+    if Evar.Set.mem evk current_set then Evarutil.nf_evar_info sigma evi
+    else evi)
+    sigma
+
+let normalize_evar_concl env sigma evk =
+  let evi = Evd.find_undefined sigma evk in
+  let env = Evd.evar_env env evi in
+  let concl = Reductionops.nf_betaiota env sigma (Evd.evar_concl evi) in
+  Evd.downcast evk concl sigma
 
 let evarconv_flags ~allowed_evars flags =
   let open Unification in
@@ -134,7 +195,8 @@ let res_pf ?(with_evars=false) ?(with_classes=true) ?(flags=dft ()) clenv =
       Evarconv.unify ~flags:(evarconv_flags ~allowed_evars flags)
         env sigma Conversion.CUMUL typ concl
     in
-    let independent, dependent = classify_evars sigma typ value evars in
+    let sigma = normalize_meta_evar_info sigma evars in
+    let independent, dependent = classify_evars env sigma typ value evars in
     let () =
       if not with_evars && not (List.is_empty dependent) then
         let missing =
@@ -159,6 +221,7 @@ let res_pf ?(with_evars=false) ?(with_classes=true) ?(flags=dft ()) clenv =
     let independent_evars =
       List.filter_map (fun { cevar; _ } -> Evarutil.advance sigma cevar) independent
     in
+    let sigma = List.fold_left (normalize_evar_concl env) sigma independent_evars in
     let sigma = List.fold_left Evd.remove_future_goal sigma independent_evars in
     Proofview.tclTHEN (Proofview.Unsafe.tclEVARS sigma) @@
     Refine.refine ~typecheck:true begin fun sigma ->
