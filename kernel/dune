@@ -34,6 +34,62 @@
  (deps (:gen-file float64_%{ocaml-config:int_size}.ml))
  (action (copy# %{gen-file} %{targets})))
 
+(rule
+ (target cClosure.ml)
+ (deps cClosure.ml.cppo)
+ (action
+  (with-stdout-to %{target}
+   (run %{bin:cppo} -n -D "PROFILED 0" %{deps}))))
+
+(rule
+ (target cClosure.mli)
+ (deps cClosure.mli.cppo)
+ (action
+  (with-stdout-to %{target}
+   (run %{bin:cppo} -n -D "PROFILED 0" %{deps}))))
+
+(rule
+ (target cClosureProfile.ml)
+ (deps cClosure.ml.cppo)
+ (action
+  (with-stdout-to %{target}
+   (run %{bin:cppo} -n -D "PROFILED 1" %{deps}))))
+
+(rule
+ (target cClosureProfile.mli)
+ (deps cClosure.mli.cppo)
+ (action
+  (with-stdout-to %{target}
+   (run %{bin:cppo} -n -D "PROFILED 1" %{deps}))))
+
+(rule
+ (target conversion.ml)
+ (deps conversion.ml.cppo)
+ (action
+  (with-stdout-to %{target}
+   (run %{bin:cppo} -n -D "PROFILED 0" %{deps}))))
+
+(rule
+ (target conversion.mli)
+ (deps conversion.mli.cppo)
+ (action
+  (with-stdout-to %{target}
+   (run %{bin:cppo} -n -D "PROFILED 0" %{deps}))))
+
+(rule
+ (target conversionProfile.ml)
+ (deps conversion.ml.cppo)
+ (action
+  (with-stdout-to %{target}
+   (run %{bin:cppo} -n -D "PROFILED 1" %{deps}))))
+
+(rule
+ (target conversionProfile.mli)
+ (deps conversion.mli.cppo)
+ (action
+  (with-stdout-to %{target}
+   (run %{bin:cppo} -n -D "PROFILED 1" %{deps}))))
+
 (documentation
  (package rocq-runtime))
 

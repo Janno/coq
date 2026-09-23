@@ -174,9 +174,9 @@ let init_warnings opts =
     (List.rev opts.pre.injections)
 
 let init_profile_lazy () =
-  CClosure.RecordedSteps.globally_record_steps ();
+  CClosureProfile.RecordedSteps.globally_record_steps ();
   at_exit (fun () ->
-      let steps = CClosure.RecordedSteps.get_global_steps () in
+      let steps = CClosureProfile.RecordedSteps.get_global_steps () in
       if CList.is_empty steps then ()
       else
         let pp = Reductionops.format_steps steps in

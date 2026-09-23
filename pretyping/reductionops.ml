@@ -1147,7 +1147,7 @@ let pp_sample_rate (num,denum) =
 
 let () =
   let optread () =
-    let rate = !CClosure.RecordedSteps.sample_rate in
+    let rate = !CClosureProfile.RecordedSteps.sample_rate in
     pp_sample_rate rate
   in
   let optwrite s =
@@ -1189,7 +1189,7 @@ let () =
           | _ -> fail ()
     in
     if num > denum then fail()
-    else CClosure.RecordedSteps.sample_rate := rate
+    else CClosureProfile.RecordedSteps.sample_rate := rate
   in
   Goptions.declare_stringopt_option {
     optstage = Interp;
@@ -1216,8 +1216,8 @@ let () = Goptions.declare_bool_option {
 let get_lazy_profiling () =
   match lazy_profiling(), lazy_time_profiling() with
   | false, _ -> None
-  | true, false -> Some CClosure.StepsOnly
-  | true, true -> Some CClosure.StepsAndTime
+  | true, false -> Some CClosureProfile.StepsOnly
+  | true, true -> Some CClosureProfile.StepsAndTime
 
 module RedContext = struct
   (* deepest last means eg mul calling add is [mul; add]
@@ -1256,7 +1256,7 @@ let inherit_steps steps =
   let add_inherited ctx steps acc =
     RedContextMap.update ctx (function
         | None -> Some steps
-        | Some steps' -> Some (CClosure.RecordedSteps.add_steps steps steps'))
+        | Some steps' -> Some (CClosureProfile.RecordedSteps.add_steps steps steps'))
       acc
   in
   let acc = RedContextMap.empty in
@@ -1329,7 +1329,7 @@ let safe_pr_global gr =
 
 let to_table header total steps =
   let open Pp in
-  let pr_row (ctx, (steps:CClosure.RecordedSteps.t)) =
+  let pr_row (ctx, (steps:CClosureProfile.RecordedSteps.t)) =
     let ppctx = match ctx.RedContext.deepest_first with
       | None -> str "top"
       | Some ctx ->
@@ -1387,7 +1387,7 @@ let format_conversion_steps left right =
       spc() ++
       to_table ("inherited ("^which^")") total inherited
   in
-  let rate = pp_sample_rate !CClosure.RecordedSteps.sample_rate in
+  let rate = pp_sample_rate !CClosureProfile.RecordedSteps.sample_rate in
   (match rate with None -> mt() | Some rate -> str "sample rate: " ++ str rate ++ spc()) ++
   one_side "left" left ++ spc() ++
   spc() ++
@@ -1395,17 +1395,19 @@ let format_conversion_steps left right =
 
 let print_conversion_steps left right =
   NewProfile.profile "print_conversion_steps" (fun () ->
-      let get_steps = CClosure.RecordedSteps.get_recorded_steps in
+      let get_steps = CClosureProfile.RecordedSteps.get_recorded_steps in
       let pp = format_conversion_steps (get_steps left) (get_steps right) in
       Feedback.msg_info Pp.(hv 2 (str "[ccnv]" ++ spc() ++ v 0 pp)))
     ()
 
-let () = Conversion.ccnv_profiling_printer := print_conversion_steps
+let () =
+  Conversion.ccnv_profiling_printer := print_conversion_steps;
+  ConversionProfile.ccnv_profiling_printer := print_conversion_steps
 
 let format_steps steps =
   let open Pp in
   let total, steps, inherited = process_steps steps in
-  let rate = pp_sample_rate !CClosure.RecordedSteps.sample_rate in
+  let rate = pp_sample_rate !CClosureProfile.RecordedSteps.sample_rate in
   (match rate with None -> mt() | Some rate -> str "sample rate: " ++ str rate ++ spc()) ++
   to_table "individual" total steps ++ spc() ++
   spc() ++
@@ -1414,7 +1416,7 @@ let format_steps steps =
 (* future work: print percentages, print step counts in children
    nicer formatting (some kind of table?) *)
 let print_recorded_steps tab =
-  let open CClosure.RecordedSteps in
+  let open CClosureProfile.RecordedSteps in
   if not @@ has_recorded_steps tab then ()
   else
     NewProfile.profile "print_recorded_steps" (fun () ->
@@ -1423,34 +1425,59 @@ let print_recorded_steps tab =
         Feedback.msg_info Pp.(hv 2 (str "[lazy]" ++ spc() ++ v 0 pp)))
       ()
 
+let use_profiled_closure profiling =
+  Option.has_some profiling ||
+  CClosureProfile.RecordedSteps.is_global_profiling () ||
+  CClosureProfile.is_tracing ()
+
+let create_profile_clos_infos env sigma flags =
+  let evars = CClosureProfile.of_evar_handler (Evd.evar_handler sigma) in
+  CClosureProfile.create_clos_infos
+    ~univs:(Evd.universes sigma) ~evars flags env
+
 (* lazy reduction functions. The infos must be created for each term *)
 (* Note by HH [oct 08] : why would it be the job of clos_norm_flags to add
    a [nf_evar] here *)
 let clos_norm_flags flgs env sigma t =
   try
-    let tab = CClosure.create_tab ?profiling:(get_lazy_profiling()) () in
-    let res = EConstr.of_constr (CClosure.norm_term
-      (Evarutil.create_clos_infos env sigma flgs)
-      tab
-      (Esubst.subs_id 0, UVars.Instance.empty) (EConstr.Unsafe.to_constr t))
-    in
-    print_recorded_steps tab;
-    res
+    let profiling = get_lazy_profiling () in
+    if use_profiled_closure profiling then begin
+      let tab = CClosureProfile.create_tab ?profiling () in
+      let res = EConstr.of_constr (CClosureProfile.norm_term
+          (create_profile_clos_infos env sigma flgs)
+          tab
+          (Esubst.subs_id 0, UVars.Instance.empty)
+          (EConstr.Unsafe.to_constr t))
+      in
+      print_recorded_steps tab;
+      res
+    end else
+      EConstr.of_constr (CClosure.norm_term
+          (Evarutil.create_clos_infos env sigma flgs)
+          (CClosure.create_tab ())
+          (Esubst.subs_id 0, UVars.Instance.empty)
+          (EConstr.Unsafe.to_constr t))
   with e when is_sync_anomaly e ->
     let _, info = Exninfo.capture e in
     user_err ~info Pp.(str "Tried to normalize ill-typed term")
 
 let clos_whd_flags flgs env sigma t =
   try
-    let tab = CClosure.create_tab ?profiling:(get_lazy_profiling()) () in
-    let res =
+    let profiling = get_lazy_profiling () in
+    if use_profiled_closure profiling then begin
+      let tab = CClosureProfile.create_tab ?profiling () in
+      let res = EConstr.of_constr (CClosureProfile.whd_val
+          (create_profile_clos_infos env sigma flgs)
+          tab
+          (CClosureProfile.inject (EConstr.Unsafe.to_constr t)))
+      in
+      print_recorded_steps tab;
+      res
+    end else
       EConstr.of_constr (CClosure.whd_val
-      (Evarutil.create_clos_infos env sigma flgs)
-      tab
-      (CClosure.inject (EConstr.Unsafe.to_constr t)))
-    in
-    print_recorded_steps tab;
-    res
+          (Evarutil.create_clos_infos env sigma flgs)
+          (CClosure.create_tab ())
+          (CClosure.inject (EConstr.Unsafe.to_constr t)))
   with e when is_sync_anomaly e ->
     let _, info = Exninfo.capture e in
     user_err ~info Pp.(str "Tried to normalize ill-typed term")

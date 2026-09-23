@@ -303,7 +303,8 @@ val apply_rules : (rel_context -> state -> state) -> env -> evar_map -> EInstanc
 
 val is_head_evar : env -> evar_map -> constr -> bool
 
-val format_steps : (CClosure.current_context * CClosure.RecordedSteps.t) list -> Pp.t
+val format_steps :
+  (CClosureProfile.current_context * CClosureProfile.RecordedSteps.t) list -> Pp.t
 
 exception AnomalyInConversion of exn
 

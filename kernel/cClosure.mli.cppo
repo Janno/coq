@@ -1,3 +1,5 @@
+(* Interface template for the fast and profiled CClosure modules. *)
+
 (************************************************************************)
 (*         *      The Rocq Prover / The Rocq Development Team           *)
 (*  v      *         Copyright INRIA, CNRS and contributors             *)
@@ -30,8 +32,11 @@ type subs_content
 type usubs = subs_content subs UVars.puniverses
 
 type table_key = Constant.t UVars.puniverses tableKey
+#if PROFILED = 1
 
 type current_context = GlobRef.t list option
+#else
+#endif
 
 (** Relevances (eg in binder_annot or case_info) have NOT been substituted
     when there is a usubs field *)
@@ -67,10 +72,19 @@ type 'a next_native_args = (CPrimitives.arg_kind * 'a) list
 
 type stack_member =
   | Zapp of fconstr array
+#if PROFILED = 1
   | ZcaseT of current_context * case_info * UVars.Instance.t * constr array * case_return * case_branch array * usubs
   | Zproj of current_context * Projection.Repr.t * Sorts.relevance
+#else
+  | ZcaseT of case_info * UVars.Instance.t * constr array * case_return * case_branch array * usubs
+  | Zproj of Projection.Repr.t * Sorts.relevance
+#endif
   | Zfix of fconstr * stack
+#if PROFILED = 1
   | Zprimitive of current_context * CPrimitives.t * pconstant * fconstr list * fconstr next_native_args
+#else
+  | Zprimitive of CPrimitives.t * pconstant * fconstr list * fconstr next_native_args
+#endif
        (* operator, constr def, arguments already seen (in rev order), next arguments *)
   | Zshift of int
   | Zupdate of fconstr
@@ -108,15 +122,25 @@ val usubst_binder : _ UVars.puniverses -> 'a binder_annot -> 'a binder_annot
 
 val inject : constr -> fconstr
 
+#if PROFILED = 1
 val mk_clos      : current_context -> usubs -> constr -> fconstr
 val mk_clos_vect : current_context -> usubs -> constr array -> fconstr array
+#else
+val mk_clos      : usubs -> constr -> fconstr
+val mk_clos_vect : usubs -> constr array -> fconstr array
+#endif
 
 val zip : fconstr -> stack -> fconstr
 
 val fterm_of : fconstr -> fterm
 val term_of_fconstr : fconstr -> constr
 val term_of_process : fconstr -> stack -> constr
+#if PROFILED = 1
 val destFLambda : fconstr -> Name.t binder_annot * fconstr * fconstr
+#else
+val destFLambda :
+  (usubs -> constr -> fconstr) -> fconstr -> Name.t binder_annot * fconstr * fconstr
+#endif
 
 (** Global and local constant cache *)
 type clos_infos
@@ -136,6 +160,9 @@ type evar_handler = {
 }
 
 val default_evar_handler : env -> evar_handler
+#if PROFILED = 1
+val of_evar_handler : CClosure.evar_handler -> evar_handler
+#endif
 val lookup_constant_handler : env -> evar_handler -> Constant.t ->
   (unit, (unit -> Vmemitcodes.to_patch) Vmemitcodes.pbody_code) Declarations.pconstant_body
 
@@ -145,7 +172,10 @@ val create_clos_infos :
   ?univs:UGraph.t -> ?evars:evar_handler -> reds -> env -> clos_infos
 val oracle_of_infos : clos_infos -> Conv_oracle.oracle
 
+#if PROFILED = 1
 type profile_mode = StepsOnly | StepsAndTime
+
+val is_tracing : unit -> bool
 
 val create_tab : ?profiling:profile_mode -> unit -> clos_tab
 
@@ -171,8 +201,13 @@ module RecordedSteps : sig
 
   val globally_record_steps : unit -> unit
 
+  val is_global_profiling : unit -> bool
+
   val get_global_steps : unit -> (current_context * t) list
 end
+#else
+val create_tab : unit -> clos_tab
+#endif
 
 val info_env : clos_infos -> env
 val info_flags: clos_infos -> reds
@@ -225,6 +260,7 @@ val esubst_of_context : constr option list -> usubs -> usubs -> int * usubs
 
 (** Conversion auxiliary functions to do step by step normalisation *)
 
+#if PROFILED = 1
 (** Like [unfold_reference], but handles primitives: if there are not
     enough arguments, return [None]. Otherwise return [Some] with
     [ZPrimitive] added to the stack. Produces a [FIrrelevant] when the
@@ -232,14 +268,28 @@ val esubst_of_context : constr option list -> usubs -> usubs -> int * usubs
     [create_conv_infos].
     The [fconstr] must be a FFlex.
 *)
+#else
+(** Like [unfold_reference], but handles primitives: if there are not
+    enough arguments, return [None]. Otherwise return [Some] with
+    [ZPrimitive] added to the stack. Produces a [FIrrelevant] when the
+    reference is irrelevant and the infos was created with
+    [create_conv_infos]. *)
+#endif
 val unfold_ref_with_args
   : clos_infos
   -> clos_tab
+#if PROFILED = 1
   -> fconstr
+#else
+  -> table_key
+#endif
   -> stack
   -> (fconstr * stack) option
+#if PROFILED = 1
 
 val record_delta : clos_tab -> fconstr -> unit
+#else
+#endif
 
 val get_ref_mask : clos_infos -> clos_tab -> table_key -> bool array
 

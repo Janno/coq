@@ -1,3 +1,7 @@
+(* This source is compiled twice by cppo. PROFILED=0 produces CClosure,
+   while PROFILED=1 produces CClosureProfile. Keep shared code outside
+   conditional sections so the reduction machine has a single source. *)
+
 (************************************************************************)
 (*         *      The Rocq Prover / The Rocq Development Team           *)
 (*  v      *         Copyright INRIA, CNRS and contributors             *)
@@ -75,19 +79,25 @@ type table_key = Constant.t UVars.puniverses tableKey
 
 type evar_repack = Evar.t * constr list -> constr
 
+#if PROFILED = 1
 (* XXX why option? currently Some [] is invalid so if we use just list
    [] would mean what None currently means *)
 type current_context = GlobRef.t list option
 
+#else
+#endif
 type fconstr = {
   mutable mark : red_state;
   mutable term: fterm;
+#if PROFILED = 1
   mutable ctx : current_context;
   (* seems not to matter sometimes, particularly on FApp terms?
      seems to matter for flambda, zcase, zfix (or I guess the ffix in zfix)
 
      probably incorrect in rewrite rule code (RedPattern)
   *)
+#else
+#endif
 }
 
 and fterm =
@@ -130,8 +140,13 @@ let set_ntrl v = v.mark <- Ntrl
 
 (* Could issue a warning if no is still Red, pointing out that we loose
    sharing. *)
+#if PROFILED = 1
 let update v1 mark ctx t =
   v1.mark <- mark; v1.term <- t; v1.ctx <- ctx
+#else
+let update v1 mark t =
+  v1.mark <- mark; v1.term <- t
+#endif
 
 type 'a evar_expansion =
 | EvarDefined of 'a
@@ -156,6 +171,20 @@ let default_evar_handler env = {
   qual_equal = Sorts.Quality.equal;
   abstr_const = fun _ -> assert false;
 }
+
+#if PROFILED = 1
+let of_evar_handler (h : CClosure.evar_handler) = {
+  evar_expand = (fun ev ->
+      match h.evar_expand ev with
+      | CClosure.EvarDefined c -> EvarDefined c
+      | CClosure.EvarUndefined (evk, args) -> EvarUndefined (evk, args));
+  evar_repack = h.evar_repack;
+  evar_irrelevant = h.evar_irrelevant;
+  qvar_irrelevant = h.qvar_irrelevant;
+  qual_equal = h.qual_equal;
+  abstr_const = h.abstr_const;
+}
+#endif
 
 let drop_opaque = function
 | OpaqueDef _ -> OpaqueDef ()
@@ -211,10 +240,19 @@ type 'a next_native_args = (CPrimitives.arg_kind * 'a) list
 
 type stack_member =
   | Zapp of fconstr array
+#if PROFILED = 1
   | ZcaseT of current_context * case_info * UVars.Instance.t * constr array * case_return * case_branch array * usubs
   | Zproj of current_context * Projection.Repr.t * Sorts.relevance
+#else
+  | ZcaseT of case_info * UVars.Instance.t * constr array * case_return * case_branch array * usubs
+  | Zproj of Projection.Repr.t * Sorts.relevance
+#endif
   | Zfix of fconstr * stack
+#if PROFILED = 1
   | Zprimitive of current_context * CPrimitives.t * pconstant * fconstr list * fconstr next_native_args
+#else
+  | Zprimitive of CPrimitives.t * pconstant * fconstr list * fconstr next_native_args
+#endif
        (* operator, constr def, arguments already seen (in rev order), next arguments *)
   | Zshift of int
   | Zupdate of fconstr
@@ -250,17 +288,38 @@ let usubs_shft (n,(e,u)) = subs_shft (n, e), u
 let rec lft_fconstr n ft =
   match ft.term with
     | (FInd _|FConstruct (_,[||])|FFlex(ConstKey _|VarKey _)|FInt _|FFloat _|FString _|FIrrelevant) -> ft
+#if PROFILED = 1
     | FRel i -> {ctx=ft.ctx;mark=ft.mark;term=FRel(i+n)}
     | FLambda(k,tys,f,e) -> {ctx=ft.ctx;mark=Cstr; term=FLambda(k,tys,f,usubs_shft(n,e))}
+#else
+    | FRel i -> {mark=ft.mark;term=FRel(i+n)}
+    | FLambda(k,tys,f,e) -> {mark=Cstr; term=FLambda(k,tys,f,usubs_shft(n,e))}
+#endif
     | FFix(fx,e) ->
+#if PROFILED = 1
       {ctx=ft.ctx; mark=Cstr; term=FFix(fx,usubs_shft(n,e))}
+#else
+      {mark=Cstr; term=FFix(fx,usubs_shft(n,e))}
+#endif
     | FCoFix(cfx,e) ->
+#if PROFILED = 1
       {ctx=ft.ctx; mark=Cstr; term=FCoFix(cfx,usubs_shft(n,e))}
+#else
+      {mark=Cstr; term=FCoFix(cfx,usubs_shft(n,e))}
+#endif
     | FLIFT(k,m) -> lft_fconstr (n+k) m
+#if PROFILED = 1
     | FConstruct (c,args) -> {ctx=ft.ctx;mark=Cstr; term=FConstruct(c,Array.Fun1.map lft_fconstr n args)}
+#else
+    | FConstruct (c,args) -> {mark=Cstr; term=FConstruct(c,Array.Fun1.map lft_fconstr n args)}
+#endif
     | FLOCKED -> assert false
     | FFlex (RelKey _) | FAtom _ | FApp _ | FProj _ | FCaseT _ | FCaseInvert _ | FProd _
+#if PROFILED = 1
     | FLetIn _ | FEvar _ | FCLOS _ | FArray _ -> {ctx=ft.ctx; mark=ft.mark; term=FLIFT(n,ft)}
+#else
+    | FLetIn _ | FEvar _ | FCLOS _ | FArray _ -> {mark=ft.mark; term=FLIFT(n,ft)}
+#endif
 let lift_fconstr k f =
   if Int.equal k 0 then f else lft_fconstr k f
 
@@ -269,9 +328,17 @@ let clos_rel e i =
     | Inl (n, Regular mt) -> Regular (lift_fconstr n mt)
     | Inl (_, HigherOrder (0, mt)) -> Regular mt
     | Inl (_, HigherOrder (nargs, mt)) -> HigherOrder (nargs, mt)
+#if PROFILED = 1
     | Inr (k, None) -> Regular {ctx=None; mark=Ntrl; term= FRel k}
+#else
+    | Inr (k, None) -> Regular {mark=Ntrl; term= FRel k}
+#endif
     | Inr (k, Some p) ->
+#if PROFILED = 1
       Regular (lift_fconstr (k-p) {ctx=None; mark=Red;term=FFlex(RelKey p)})
+#else
+      Regular (lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)})
+#endif
 
 (* since the head may be reducible, we might introduce lifts of 0 *)
 let compact_stack head stk =
@@ -282,7 +349,11 @@ let compact_stack head stk =
            lost by the update operation *)
         let h' = lft_fconstr depth head in
         (** The stack contains [Zupdate] marks only if in sharing mode *)
+#if PROFILED = 1
         let () = update m h'.mark h'.ctx h'.term in
+#else
+        let () = update m h'.mark h'.term in
+#endif
         strip_rec depth s
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zapp _ | Zprimitive _) :: _ | []) as stk -> zshift depth stk
   in
@@ -328,20 +399,45 @@ let usubs_lift (e,u) = subs_lift e, u
 
 let usubs_liftn n (e,u) = subs_liftn n e, u
 
+#if PROFILED = 1
+#else
+(* t must be a FLambda and binding list cannot be empty *)
+let destFLambda clos_fun t =
+  match [@ocaml.warning "-4"] t.term with
+  | FLambda(_,[(na,ty)],b,e) ->
+    (usubst_binder e na,clos_fun e ty,clos_fun (usubs_lift e) b)
+  | FLambda(n,(na,ty)::tys,b,e) ->
+    (usubst_binder e na,clos_fun e ty,{mark=t.mark;term=FLambda(n-1,tys,b,usubs_lift e)})
+  | _ -> assert false
+
+#endif
 (* Optimization: do not enclose variables in a closure.
    Makes variable access much faster *)
+#if PROFILED = 1
 let mk_clos ctx (e:usubs) t =
+#else
+let mk_clos (e:usubs) t =
+#endif
   match kind t with
     | Rel i ->
+#if PROFILED = 1
       (* shortcut ignores the current ctx to use the one in the subst *)
+#else
+#endif
       begin match clos_rel (fst e) i with
       | Regular v -> v
       | HigherOrder _ -> CErrors.anomaly Pp.(str "Uncaught pattern variable")
       end
+#if PROFILED = 1
     | Var x -> {ctx; mark = Red; term = FFlex (VarKey x) }
     | Const c -> {ctx; mark = Red; term = FFlex (ConstKey (usubst_punivs e c)) }
+#else
+    | Var x -> {mark = Red; term = FFlex (VarKey x) }
+    | Const c -> {mark = Red; term = FFlex (ConstKey (usubst_punivs e c)) }
+#endif
     | Sort s ->
       let s = usubst_sort e s in
+#if PROFILED = 1
       {ctx; mark = Ntrl; term = FAtom (mkSort s) }
     | Meta _ -> {ctx; mark = Ntrl; term = FAtom t }
     | Ind kn -> {ctx; mark = Ntrl; term = FInd (usubst_punivs e kn) }
@@ -349,10 +445,24 @@ let mk_clos ctx (e:usubs) t =
     | Int i -> {ctx; mark = Cstr; term = FInt i}
     | Float f -> {ctx; mark = Cstr; term = FFloat f}
     | String s -> {ctx; mark = Cstr; term = FString s}
+#else
+      {mark = Ntrl; term = FAtom (mkSort s) }
+    | Meta _ -> {mark = Ntrl; term = FAtom t }
+    | Ind kn -> {mark = Ntrl; term = FInd (usubst_punivs e kn) }
+    | Construct kn -> {mark = Cstr; term = FConstruct (usubst_punivs e kn,[||]) }
+    | Int i -> {mark = Cstr; term = FInt i}
+    | Float f -> {mark = Cstr; term = FFloat f}
+    | String s -> {mark = Cstr; term = FString s}
+#endif
     | (CoFix _|Lambda _|Fix _|Prod _|Evar _|App _|Case _|Cast _|LetIn _|Proj _|Array _) ->
+#if PROFILED = 1
         {ctx; mark = Red; term = FCLOS(t,e)}
+#else
+        {mark = Red; term = FCLOS(t,e)}
+#endif
   (* Invariant, pattern variables under apps are deferred to knht by being wrapped in FCLOS *)
 
+#if PROFILED = 1
 (* t must be a FLambda and binding list cannot be empty *)
 let destFLambda t =
   match [@ocaml.warning "-4"] t.term with
@@ -361,12 +471,23 @@ let destFLambda t =
   | FLambda(n,(na,ty)::tys,b,e) ->
     (usubst_binder e na,mk_clos t.ctx e ty,{ctx=t.ctx; mark=t.mark; term=FLambda(n-1,tys,b,usubs_lift e)})
   | _ -> assert false
+#else
+let injectu c u = mk_clos (subs_id 0, u) c
+#endif
 
+#if PROFILED = 1
 let injectu src c u = mk_clos src (subs_id 0, u) c
+#else
+let inject c = injectu c UVars.Instance.empty
+#endif
 
+#if PROFILED = 1
 let inject src c = injectu src c UVars.Instance.empty
 
 let mk_irrelevant = { ctx = None; mark = Cstr; term = FIrrelevant }
+#else
+let mk_irrelevant = { mark = Cstr; term = FIrrelevant }
+#endif
 
 let is_irrelevant info r = match info.i_cache.i_mode with
 | Reduction -> false
@@ -404,11 +525,19 @@ end = struct
 
   let assoc_defined d =
     match d with
+#if PROFILED = 1
     | NamedDecl.LocalDef (_, c, _) -> inject None c
+#else
+    | NamedDecl.LocalDef (_, c, _) -> inject c
+#endif
     | NamedDecl.LocalAssum (_, _) -> raise Not_found
 
   let constant_value_in u = function
+#if PROFILED = 1
     | Def b -> injectu None b u
+#else
+    | Def b -> injectu b u
+#endif
     | OpaqueDef _ -> raise (NotEvaluableConst Opaque)
     | Undef _ -> raise (NotEvaluableConst NoBody)
     | Primitive p -> raise (NotEvaluableConst (IsPrimitive (u,p)))
@@ -427,7 +556,11 @@ end = struct
           | RelDecl.LocalAssum _ -> raise Not_found
           | RelDecl.LocalDef (_, t, _) -> lift n t
         in
+#if PROFILED = 1
         Def (inject None body, [||])
+#else
+        Def (inject body, [||])
+#endif
       | VarKey id ->
         let def = Environ.lookup_named id env in
         shortcut_irrelevant info
@@ -472,8 +605,13 @@ end = struct
     Table.add tab ref v; v
 end
 
+#if PROFILED = 1
 type step_kind = Beta | Delta | Match | Fix
+#else
+type clos_tab = Table.t
+#endif
 
+#if PROFILED = 1
 module RedContext = struct
   type t = current_context
 
@@ -599,6 +737,8 @@ module RecordedSteps = struct
 
   let globally_record_steps () = global_steps := Some (RedContextTbl.create 57)
 
+  let is_global_profiling () = Option.has_some !global_steps
+
   let get_global_steps () =
     match !global_steps with
     | None -> []
@@ -612,19 +752,37 @@ module RecordedSteps = struct
   let sample_rate = sample_rate
 
 end
+#else
+let create_tab = Table.create
+#endif
 
 (************************************************************************)
 
 (** Hand-unrolling of the map function to bypass the call to the generic array
     allocation *)
+#if PROFILED = 1
 let mk_clos_vect ctx env v = match v with
+#else
+let mk_clos_vect env v = match v with
+#endif
 | [||] -> [||]
+#if PROFILED = 1
 | [|v0|] -> [|mk_clos ctx env v0|]
 | [|v0; v1|] -> [|mk_clos ctx env v0; mk_clos ctx env v1|]
 | [|v0; v1; v2|] -> [|mk_clos ctx env v0; mk_clos ctx env v1; mk_clos ctx env v2|]
+#else
+| [|v0|] -> [|mk_clos env v0|]
+| [|v0; v1|] -> [|mk_clos env v0; mk_clos env v1|]
+| [|v0; v1; v2|] -> [|mk_clos env v0; mk_clos env v1; mk_clos env v2|]
+#endif
 | [|v0; v1; v2; v3|] ->
+#if PROFILED = 1
   [|mk_clos ctx env v0; mk_clos ctx env v1; mk_clos ctx env v2; mk_clos ctx env v3|]
 | v -> Array.Fun1.map (fun (ctx,env) v -> mk_clos ctx env v) (ctx,env) v
+#else
+  [|mk_clos env v0; mk_clos env v1; mk_clos env v2; mk_clos env v3|]
+| v -> Array.Fun1.map mk_clos env v
+#endif
 
 let rec subst_constr (subst,usubst as e) c =
   let c = Vars.map_constr_relevance (usubst_relevance e) c in
@@ -910,35 +1068,72 @@ let mkFApp h args =
   else match[@warning "-4"] h.term with
     | FConstruct (c, args0) ->
       let args = if CArray.is_empty args0 then args else Array.append args0 args in
+#if PROFILED = 1
       {ctx=None; mark=Cstr; term=FConstruct(c, args)}
+#else
+      {mark=Cstr; term=FConstruct(c, args)}
+#endif
     | _ ->
       (* don't bother collapsing FApp nodes *)
+#if PROFILED = 1
       {ctx=None; mark=neutr h.mark; term=FApp(h,args)}
+#else
+      {mark=neutr h.mark; term=FApp(h,args)}
+#endif
 
 let rec zip m stk =
   match stk with
     | [] -> m
     | Zapp args :: s -> zip (mkFApp m args) s
+#if PROFILED = 1
     | ZcaseT(ctx, ci, u, pms, p, br, e)::s ->
+#else
+    | ZcaseT(ci, u, pms, p, br, e)::s ->
+#endif
         let t = FCaseT(ci, u, pms, p, m, br, e) in
         let mark = (neutr m.mark) in
+#if PROFILED = 1
         zip {ctx; mark; term=t} s
     | Zproj (ctx, p,r) :: s ->
+#else
+        zip {mark; term=t} s
+    | Zproj (p,r) :: s ->
+#endif
         let mark = (neutr m.mark) in
+#if PROFILED = 1
         zip {ctx; mark; term=FProj(Projection.make p true,r,m)} s
+#else
+        zip {mark; term=FProj(Projection.make p true,r,m)} s
+#endif
     | Zfix(fx,par)::s ->
         zip fx (par @ append_stack [|m|] s)
     | Zshift(n)::s ->
         zip (lift_fconstr n m) s
     | Zupdate(rf)::s ->
       (** The stack contains [Zupdate] marks only if in sharing mode *)
+#if PROFILED = 1
         let () = update rf m.mark m.ctx m.term in
+#else
+        let () = update rf m.mark m.term in
+#endif
         zip rf s
+#if PROFILED = 1
     | Zprimitive(ctx,_op,c,rargs,kargs)::s ->
+#else
+    | Zprimitive(_op,c,rargs,kargs)::s ->
+#endif
       let args = List.rev_append rargs (m::List.map snd kargs) in
+#if PROFILED = 1
       let f = {ctx; mark = Red; term = FFlex (ConstKey c)} in
+#else
+      let f = {mark = Red; term = FFlex (ConstKey c)} in
+#endif
       (* don't need to mkFApp because not a constructor *)
+#if PROFILED = 1
       zip {ctx; mark=(neutr m.mark); term = FApp (f, Array.of_list args)} s
+#else
+      zip {mark=(neutr m.mark); term = FApp (f, Array.of_list args)} s
+#endif
 
 let fapp_stack (m,stk) = zip m stk
 
@@ -962,7 +1157,11 @@ let strip_update_shift_absorb_app head stk =
         strip_rec (mkFApp h args) s
     | Zupdate(m)::s ->
       (** The stack contains [Zupdate] marks only if in sharing mode *)
+#if PROFILED = 1
         let () = update m h.mark h.ctx h.term in
+#else
+        let () = update m h.mark h.term in
+#endif
         strip_rec m s
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zprimitive _) :: _ | []) as stk ->
       (* depth and rstk only matter for cofix *)
@@ -979,7 +1178,11 @@ let strip_update_shift_app_red head stk =
         strip_rec (Zapp args :: rstk) (mkFApp h args) depth s
     | Zupdate(m)::s ->
       (** The stack contains [Zupdate] marks only if in sharing mode *)
+#if PROFILED = 1
         let () = update m h.mark h.ctx h.term in
+#else
+        let () = update m h.mark h.term in
+#endif
         strip_rec rstk m depth s
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zprimitive _) :: _ | []) as stk ->
       (* depth and rstk only matter for cofix *)
@@ -1009,7 +1212,11 @@ let get_nth_arg head n stk =
           (Some (stk', args.(n)), append_stack aft s')
     | Zupdate(m)::s ->
         (** The stack contains [Zupdate] mark only if in sharing mode *)
+#if PROFILED = 1
         let () = update m h.mark h.ctx h.term in
+#else
+        let () = update m h.mark h.term in
+#endif
         strip_rec rstk m n s
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zprimitive _) :: _ | []) as s -> (None, List.rev rstk @ s) in
   strip_rec [] head n stk
@@ -1027,13 +1234,26 @@ let usubs_consv v s =
 
 (* Beta reduction: look for an applied argument in the stack.
    Since the encountered update marks are removed, h must be a whnf *)
+#if PROFILED = 1
 let rec get_args ctx n tys f e = function
+#else
+let rec get_args n tys f e = function
+#endif
     | Zupdate r :: s ->
         (** The stack contains [Zupdate] mark only if in sharing mode *)
+#if PROFILED = 1
         let () = update r Cstr ctx (FLambda(n,tys,f,e)) in
         get_args ctx n tys f e s
+#else
+        let () = update r Cstr (FLambda(n,tys,f,e)) in
+        get_args n tys f e s
+#endif
     | Zshift k :: s ->
+#if PROFILED = 1
         get_args ctx n tys f (usubs_shft (k,e)) s
+#else
+        get_args n tys f (usubs_shft (k,e)) s
+#endif
     | Zapp l :: s ->
         let na = Array.length l in
         if n == na then (Inl (usubs_consn l 0 na e), s)
@@ -1042,9 +1262,17 @@ let rec get_args ctx n tys f e = function
           (Inl (usubs_consn l 0 n e), Zapp eargs :: s)
         else (* more lambdas *)
           let etys = List.skipn na tys in
+#if PROFILED = 1
           get_args ctx (n-na) etys f (usubs_consn l 0 na e) s
+#else
+          get_args (n-na) etys f (usubs_consn l 0 na e) s
+#endif
     | ((ZcaseT _ | Zproj _ | Zfix _ | Zprimitive _) :: _ | []) as stk ->
+#if PROFILED = 1
       (Inr {ctx; mark=Cstr; term=FLambda(n,tys,f,e)}, stk)
+#else
+      (Inr {mark=Cstr; term=FLambda(n,tys,f,e)}, stk)
+#endif
 
 (* Eta expansion: add a reference to implicit surrounding lambda at end of stack *)
 let rec eta_expand_stack info na = function
@@ -1054,7 +1282,11 @@ let rec eta_expand_stack info na = function
   | [] ->
     let arg =
       if is_irrelevant info na.binder_relevance then mk_irrelevant
+#if PROFILED = 1
       else {ctx = None; mark = Ntrl; term = FRel 1}
+#else
+      else {mark = Ntrl; term = FRel 1}
+#endif
     in
     [Zshift 1; Zapp [|arg|]]
 
@@ -1085,14 +1317,26 @@ let get_native_args op c stk =
            Zapp (Array.of_list eargs) :: s')
         | rnargs, kargs, _ ->
           (* head of h is not constructor -> no need to mkFApp *)
+#if PROFILED = 1
           strip_rec rnargs {ctx = None; mark = h.mark;term=FApp(h, args)} depth kargs s'
+#else
+          strip_rec rnargs {mark = h.mark;term=FApp(h, args)} depth kargs s'
+#endif
       end
     | Zupdate(m) :: s ->
+#if PROFILED = 1
       let () = update m h.mark h.ctx h.term in
+#else
+      let () = update m h.mark h.term in
+#endif
       strip_rec rnargs m depth  kargs s
     | (Zprimitive _ | ZcaseT _ | Zproj _ | Zfix _) :: _ | [] -> assert false
+#if PROFILED = 1
   in strip_rec [] {ctx=None; mark = Red; term = FFlex(ConstKey c)} 0 kargs stk
 (* not sure about ctx=None here *)
+#else
+  in strip_rec [] {mark = Red; term = FFlex(ConstKey c)} 0 kargs stk
+#endif
 
 let get_native_args1 op c stk =
   match get_native_args op c stk with
@@ -1127,7 +1371,11 @@ let inductive_subst mib u pms =
     subs_cons (Regular pms.(i)) subs
   | RelDecl.LocalDef (_, c, _) :: ctx ->
     let subs = mk_pms i ctx in
+#if PROFILED = 1
     subs_cons (Regular (mk_clos None (subs,u) c)) subs
+#else
+    subs_cons (Regular (mk_clos (subs,u) c)) subs
+#endif
   in
   mk_pms (Array.length pms - 1) mib.mind_params_ctxt, u
 
@@ -1140,7 +1388,11 @@ let args_subst ind_subst ctx args e =
       let c = args.(i) in
       aux (usubs_cons c args_subst) (usubs_cons c ind_subst) (succ i) ctx
     | RelDecl.LocalDef (_, b, _) :: ctx ->
+#if PROFILED = 1
       let c = mk_clos None ind_subst b in
+#else
+      let c = mk_clos ind_subst b in
+#endif
       aux (usubs_cons c args_subst) (usubs_cons c ind_subst) i ctx
   in
   aux e ind_subst 0 (List.rev ctx)
@@ -1150,7 +1402,11 @@ let esubst_of_context ctx args e =
   | [] -> lft, e
   | None :: ctx -> aux (lft + 1) (usubs_lift e) (usubs_lift args) ctx
   | Some c :: ctx ->
+#if PROFILED = 1
     let c = mk_clos None args c in
+#else
+    let c = mk_clos args c in
+#endif
     aux lft (usubs_cons c e) (usubs_cons c args) ctx
   in
   aux 0 e args (List.rev ctx)
@@ -1173,7 +1429,11 @@ let get_branch infos ci pms ((ind, c), u) args br e =
     let mip = mib.mind_packets.(snd ind) in
     let (ctx, _) = mip.mind_nf_lc.(i) in
     let ctx, _ = List.chop mip.mind_consnrealdecls.(i) ctx in
+#if PROFILED = 1
     let ind_subst = inductive_subst mib u (Array.map (mk_clos None e) pms) in
+#else
+    let ind_subst = inductive_subst mib u (Array.map (mk_clos e) pms) in
+#endif
     let e = args_subst ind_subst ctx args e in
     (br, e)
 
@@ -1206,8 +1466,12 @@ let eta_expand_ind_stack env (ind,u) args m' =
       then raise Not_found (* partially applied constructor (missing non-param arguments) *)
     in
     let hstack = Array.map (fun (p,r) ->
+#if PROFILED = 1
         { ctx = (fst m').ctx; (* not sure about ctx here *)
           mark = Red; (* right can't be a constructor though *)
+#else
+        { mark = Red; (* right can't be a constructor though *)
+#endif
           term = FProj (Projection.make p true, UVars.subst_instance_relevance u r, right) })
         projs
     in
@@ -1222,17 +1486,29 @@ let eta_expand_ind_stack env (ind,u) args m' =
  *    -> (S. FCLOS(F0,S) . ... . FCLOS(Fn-1,S), Ti)
  *)
 (* does not deal with FLIFT *)
+#if PROFILED = 1
 let contract_fix_vect ctx fix =
+#else
+let contract_fix_vect fix =
+#endif
   let (thisbody, make_body, env, nfix) =
     match [@ocaml.warning "-4"] fix with
       | FFix (((reci,i),(_,_,bds as rdcl)),env) ->
           (bds.(i),
+#if PROFILED = 1
            (fun j -> { ctx; mark = Cstr;
+#else
+           (fun j -> { mark = Cstr;
+#endif
                        term = FFix (((reci,j),rdcl),env) }),
            env, Array.length bds)
       | FCoFix ((i,(_,_,bds as rdcl)),env) ->
           (bds.(i),
+#if PROFILED = 1
            (fun j -> { ctx; mark = Cstr;
+#else
+           (fun j -> { mark = Cstr;
+#endif
                        term = FCoFix ((j,rdcl),env) }),
            env, Array.length bds)
       | _ -> assert false
@@ -1243,10 +1519,18 @@ let contract_fix_vect ctx fix =
   in
   (on_fst (fun env -> mk_subs env 0) env, thisbody)
 
+#if PROFILED = 1
 let unfold_projection info ctx p r =
+#else
+let unfold_projection info p r =
+#endif
   if red_projection info.i_flags p
   then
+#if PROFILED = 1
     Some (Zproj (ctx, Projection.repr p, r))
+#else
+    Some (Zproj (Projection.repr p, r))
+#endif
   else None
 
 (************************************************************************)
@@ -1263,7 +1547,11 @@ module FNativeEntries =
 
     let mk_construct c =
       (* All constructors used in primitive functions are relevant *)
+#if PROFILED = 1
       { ctx = None; mark = Cstr; term = FConstruct (UVars.in_punivs c, [||]) }
+#else
+      { mark = Cstr; term = FConstruct (UVars.in_punivs c, [||]) }
+#endif
 
     let get = Array.get
 
@@ -1287,7 +1575,11 @@ module FNativeEntries =
       | FArray (_u,t,_ty) -> t
       | _ -> assert false
 
+#if PROFILED = 1
     let dummy = {ctx=None; mark = Ntrl; term = FRel 0}
+#else
+    let dummy = {mark = Ntrl; term = FRel 0}
+#endif
 
     let current_retro = ref Retroknowledge.empty
     let defined_int = ref false
@@ -1297,7 +1589,11 @@ module FNativeEntries =
       match retro.Retroknowledge.retro_int63 with
       | Some c ->
         defined_int := true;
+#if PROFILED = 1
         fint := { ctx=None; mark = Ntrl; term = FFlex (ConstKey (UVars.in_punivs c)) }
+#else
+        fint := { mark = Ntrl; term = FFlex (ConstKey (UVars.in_punivs c)) }
+#endif
       | None -> defined_int := false
 
     let defined_float = ref false
@@ -1307,7 +1603,11 @@ module FNativeEntries =
       match retro.Retroknowledge.retro_float64 with
       | Some c ->
         defined_float := true;
+#if PROFILED = 1
         ffloat := { ctx=None; mark = Ntrl; term = FFlex (ConstKey (UVars.in_punivs c)) }
+#else
+        ffloat := { mark = Ntrl; term = FFlex (ConstKey (UVars.in_punivs c)) }
+#endif
       | None -> defined_float := false
 
     let defined_string = ref false
@@ -1317,7 +1617,11 @@ module FNativeEntries =
       match retro.Retroknowledge.retro_string with
       | Some c ->
         defined_string := true;
+#if PROFILED = 1
         fstring := { ctx=None; mark = Ntrl; term = FFlex (ConstKey (UVars.in_punivs c)) }
+#else
+        fstring := { mark = Ntrl; term = FFlex (ConstKey (UVars.in_punivs c)) }
+#endif
       | None -> defined_string := false
 
     let defined_bool = ref false
@@ -1368,7 +1672,11 @@ module FNativeEntries =
         fLt := mk_construct cLt;
         fGt := mk_construct cGt;
         let (icmp, _) = cEq in
+#if PROFILED = 1
         fcmp := { ctx=None; mark = Ntrl; term = FInd (UVars.in_punivs icmp) }
+#else
+        fcmp := { mark = Ntrl; term = FInd (UVars.in_punivs icmp) }
+#endif
       | None -> defined_cmp := false
 
     let defined_f_cmp = ref false
@@ -1477,15 +1785,27 @@ module FNativeEntries =
 
     let mkInt env i =
       check_int env;
+#if PROFILED = 1
       { ctx=None; mark = Cstr; term = FInt i }
+#else
+      { mark = Cstr; term = FInt i }
+#endif
 
     let mkFloat env f =
       check_float env;
+#if PROFILED = 1
       {ctx=None;  mark = Cstr; term = FFloat f }
+#else
+      { mark = Cstr; term = FFloat f }
+#endif
 
     let mkString env s =
       check_string env;
+#if PROFILED = 1
       {ctx=None;  mark = Cstr; term = FString s }
+#else
+      { mark = Cstr; term = FString s }
+#endif
 
     let mkBool env b =
       check_bool env;
@@ -1570,7 +1890,11 @@ module FNativeEntries =
 
     let mkArray env u t ty =
       check_array env;
+#if PROFILED = 1
       {ctx=None;  mark = Cstr; term = FArray (u,t,ty)}
+#else
+      { mark = Cstr; term = FArray (u,t,ty)}
+#endif
 
   end
 
@@ -1582,14 +1906,22 @@ let rec skip_irrelevant_stack info stk = match stk with
 | (Zfix _ | Zproj _) :: s ->
   (* Typing rules ensure that fix / proj over SProp is irrelevant *)
   skip_irrelevant_stack info s
+#if PROFILED = 1
 | ZcaseT (_, _, _, _, (_,r), _, e) :: s ->
+#else
+| ZcaseT (_, _, _, (_,r), _, e) :: s ->
+#endif
   let r = usubst_relevance e r in
   if is_irrelevant info r then skip_irrelevant_stack info s
   else stk
 | Zprimitive _ :: _ -> assert false (* no irrelevant primitives so far *)
 | Zupdate m :: s ->
   (** The stack contains [Zupdate] marks only if in sharing mode *)
+#if PROFILED = 1
   let () = update m mk_irrelevant.mark None mk_irrelevant.term in
+#else
+  let () = update m mk_irrelevant.mark mk_irrelevant.term in
+#endif
   skip_irrelevant_stack info s
 
 let is_irrelevant_constructor infos ((ind,_),u) =
@@ -1600,33 +1932,62 @@ let is_irrelevant_constructor infos ((ind,_),u) =
    atom or a subterm that may produce a redex (abstraction,
    constructor, cofix, letin, constant), or a neutral term (product,
    inductive) *)
+#if PROFILED = 1
 let rec knh info tab m stk =
   let () = update_time tab m.ctx in
+#else
+let rec knh info m stk =
+#endif
   match m.term with
+#if PROFILED = 1
     | FLIFT(k,a) -> knh info tab a (zshift k stk)
     | FCLOS(t,e) -> knht info tab e m.ctx t (zupdate info m stk)
+#else
+    | FLIFT(k,a) -> knh info a (zshift k stk)
+    | FCLOS(t,e) -> knht info e t (zupdate info m stk)
+#endif
     | FLOCKED -> assert false
+#if PROFILED = 1
     | FApp(a,b) -> knh info tab a (append_stack b (zupdate info m stk))
+#else
+    | FApp(a,b) -> knh info a (append_stack b (zupdate info m stk))
+#endif
     | FCaseT(ci,u,pms,(_,r as p),t,br,e) ->
       let r' = usubst_relevance e r in
       if is_irrelevant info r' then
         (mk_irrelevant, skip_irrelevant_stack info stk)
       else
+#if PROFILED = 1
         knh info tab t (ZcaseT(m.ctx,ci,u,pms,p,br,e)::zupdate info m stk)
+#else
+        knh info t (ZcaseT(ci,u,pms,p,br,e)::zupdate info m stk)
+#endif
     | FFix (((ri, n), (lna, _, _)), e) ->
       if is_irrelevant info (usubst_relevance e (lna.(n)).binder_relevance) then
         (mk_irrelevant, skip_irrelevant_stack info stk)
       else
         (match get_nth_arg m ri.(n) stk with
+#if PROFILED = 1
              (Some(pars,arg),stk') -> knh info tab arg (Zfix(m,pars)::stk')
+#else
+             (Some(pars,arg),stk') -> knh info arg (Zfix(m,pars)::stk')
+#endif
            | (None, stk') -> (m,stk'))
     | FProj (p,r,c) ->
       if is_irrelevant info r then
         (mk_irrelevant, skip_irrelevant_stack info stk)
       else
+#if PROFILED = 1
       (match unfold_projection info m.ctx p r with
+#else
+      (match unfold_projection info p r with
+#endif
        | None -> (m, stk)
+#if PROFILED = 1
        | Some s -> knh info tab c (s :: zupdate info m stk))
+#else
+       | Some s -> knh info c (s :: zupdate info m stk))
+#endif
     | FConstruct _ -> strip_update_shift_absorb_app m stk
 
 (* cases where knh stops *)
@@ -1636,81 +1997,160 @@ let rec knh info tab m stk =
         (m, stk)
 
 (* The same for pure terms *)
+#if PROFILED = 1
 and knht info tab e ctx t stk =
   let () = update_time tab ctx in
+#else
+and knht info e t stk =
+#endif
   match kind t with
   | Rel n ->
     begin match clos_rel (fst e) n with
+#if PROFILED = 1
     | Regular v -> knh info tab v stk
+#else
+    | Regular v -> knh info v stk
+#endif
     | HigherOrder _ -> CErrors.anomaly Pp.(str "Uncaught pattern variable")
     end
   | App (f, args) ->
     begin match [@ocaml.warning "-4"] kind f with
     | Rel n ->
+#if PROFILED = 1
       let args = mk_clos_vect ctx e args in
+#else
+      let args = mk_clos_vect e args in
+#endif
       begin match clos_rel (fst e) n with
+#if PROFILED = 1
       | Regular t -> knh info tab t (append_stack args stk)
+#else
+      | Regular t -> knh info t (append_stack args stk)
+#endif
       | HigherOrder (nargs, term) ->
         let subs', args = Array.chop nargs args in
         let id = subs_id (Range.length info.i_relevances) in
         let subs' = Array.fold_left (fun s v -> subs_cons (Regular v) s) id subs' in
         let head = resubst subs' term in
+#if PROFILED = 1
         knh info tab head (append_stack args stk)
+#else
+        knh info head (append_stack args stk)
+#endif
       end
+#if PROFILED = 1
     | _ -> knht info tab e ctx f (append_stack (mk_clos_vect ctx e args) stk)
+#else
+    | _ -> knht info e f (append_stack (mk_clos_vect e args) stk)
+#endif
     end
     | Case(ci,u,pms,(_,r as p),NoInvert,t,br) ->
       if is_irrelevant info (usubst_relevance e r) then
         (mk_irrelevant, skip_irrelevant_stack info stk)
       else
+#if PROFILED = 1
         knht info tab e ctx t (ZcaseT(ctx, ci, u, pms, p, br, e)::stk)
+#else
+        knht info e t (ZcaseT(ci, u, pms, p, br, e)::stk)
+#endif
     | Case(ci,u,pms,(_,r as p),CaseInvert{indices},t,br) ->
       if is_irrelevant info (usubst_relevance e r) then
         (mk_irrelevant, skip_irrelevant_stack info stk)
       else
+#if PROFILED = 1
         let term = FCaseInvert (ci, u, pms, p, (Array.map (mk_clos ctx e) indices), mk_clos ctx e t, br, e) in
         { ctx; mark = Red; term }, stk
+#else
+        let term = FCaseInvert (ci, u, pms, p, (Array.map (mk_clos e) indices), mk_clos e t, br, e) in
+        { mark = Red; term }, stk
+#endif
     | Fix (((_, n), (lna, _, _)) as fx) ->
       if is_irrelevant info (usubst_relevance e (lna.(n)).binder_relevance) then
         (mk_irrelevant, skip_irrelevant_stack info stk)
       else
+#if PROFILED = 1
         knh info tab { ctx; mark = Cstr; term = FFix (fx, e) } stk
     | Cast(a,_,_) -> knht info tab e ctx a stk
+#else
+        knh info { mark = Cstr; term = FFix (fx, e) } stk
+    | Cast(a,_,_) -> knht info e a stk
+#endif
     | Proj (p, r, c) ->
       let r = usubst_relevance e r in
       if is_irrelevant info r then
         (mk_irrelevant, skip_irrelevant_stack info stk)
+#if PROFILED = 1
       else begin match unfold_projection info ctx p r with
       | None -> ({ ctx; mark = Red; term = FProj (p, r, mk_clos ctx e c) }, stk)
       | Some s -> knht info tab e ctx c (s :: stk)
+#else
+      else begin match unfold_projection info p r with
+      | None -> ({ mark = Red; term = FProj (p, r, mk_clos e c) }, stk)
+      | Some s -> knht info e c (s :: stk)
+#endif
       end
+#if PROFILED = 1
     | Construct _ -> knh info tab (mk_clos ctx e t) stk
     | (Ind _|Const _|Var _|Meta _ | Sort _ | Int _|Float _|String _) -> (mk_clos ctx e t, stk)
+#else
+    | Construct _ -> knh info (mk_clos e t) stk
+    | (Ind _|Const _|Var _|Meta _ | Sort _ | Int _|Float _|String _) -> (mk_clos e t, stk)
+#endif
     | CoFix cfx ->
+#if PROFILED = 1
       { ctx; mark = Cstr; term = FCoFix (cfx,e) }, stk
     | Lambda _ -> { ctx; mark = Cstr ; term = mk_lambda e t }, stk
+#else
+      { mark = Cstr; term = FCoFix (cfx,e) }, stk
+    | Lambda _ -> { mark = Cstr ; term = mk_lambda e t }, stk
+#endif
     | Prod (n, t, c) ->
+#if PROFILED = 1
       { ctx; mark = Ntrl; term = FProd (n, mk_clos ctx e t, c, e) }, stk
+#else
+      { mark = Ntrl; term = FProd (n, mk_clos e t, c, e) }, stk
+#endif
     | LetIn (n,b,t,c) ->
+#if PROFILED = 1
       { ctx; mark = Red; term = FLetIn (n, mk_clos ctx e b, mk_clos ctx e t, c, e) }, stk
+#else
+      { mark = Red; term = FLetIn (n, mk_clos e b, mk_clos e t, c, e) }, stk
+#endif
     | Evar ev ->
       begin match info.i_cache.i_sigma.evar_expand ev with
+#if PROFILED = 1
       | EvarDefined c -> knht info tab e ctx c stk
+#else
+      | EvarDefined c -> knht info e c stk
+#endif
       | EvarUndefined (evk, args) ->
         assert (UVars.Instance.is_empty (snd e));
         if info.i_cache.i_mode = Conversion && info.i_cache.i_sigma.evar_irrelevant ev then
           (mk_irrelevant, skip_irrelevant_stack info stk)
         else
           let repack = info.i_cache.i_sigma.evar_repack in
+#if PROFILED = 1
           { ctx; mark = Ntrl; term = FEvar (evk, args, e, repack) }, stk
+#else
+          { mark = Ntrl; term = FEvar (evk, args, e, repack) }, stk
+#endif
       end
     | Array(u,t,def,ty) ->
       let u = usubst_instance e u in
       let len = Array.length t in
+#if PROFILED = 1
       let ty = mk_clos ctx e ty in
       let t = Parray.init (Uint63.of_int len) (fun i -> mk_clos ctx e t.(i)) (mk_clos ctx e def) in
+#else
+      let ty = mk_clos e ty in
+      let t = Parray.init (Uint63.of_int len) (fun i -> mk_clos e t.(i)) (mk_clos e def) in
+#endif
       let term = FArray (u,t,ty) in
+#if PROFILED = 1
       knh info tab { ctx; mark = Cstr; term } stk
+#else
+      knh info { mark = Cstr; term } stk
+#endif
 
 (************************************************************************)
 
@@ -1719,9 +2159,15 @@ let conv : (clos_infos -> clos_tab -> fconstr -> fconstr -> bool) ref
 let set_conv f = conv := f
 
 type ('a, 'b) reduction = {
+#if PROFILED = 1
   red_ret : clos_infos -> clos_tab -> pat_state:'b -> ?failed:bool -> (fconstr * stack) -> 'a;
   red_kni : clos_infos -> clos_tab -> pat_state:'b -> fconstr -> stack -> 'a;
   red_knit : clos_infos -> clos_tab -> pat_state:'b -> usubs -> current_context -> Constr.t -> stack -> 'a;
+#else
+  red_ret : clos_infos -> Table.t -> pat_state:'b -> ?failed:bool -> (fconstr * stack) -> 'a;
+  red_kni : clos_infos -> Table.t -> pat_state:'b -> fconstr -> stack -> 'a;
+  red_knit : clos_infos -> Table.t -> pat_state:'b -> usubs -> Constr.t -> stack -> 'a;
+#endif
 }
 
 type (_, _) escape =
@@ -1737,10 +2183,18 @@ type _ depth =
   | Nil: (fconstr * stack, 'ret) escape -> 'ret depth
   | Cons: resume_state * 'ret depth -> 'ret depth
 
+#if PROFILED = 1
 val match_symbol : ('a, 'a depth) reduction -> clos_infos -> clos_tab ->
+#else
+val match_symbol : ('a, 'a depth) reduction -> clos_infos -> Table.t ->
+#endif
   pat_state:'a depth -> table_key -> UVars.Instance.t * bool * machine_rewrite_rule list -> stack -> 'a
 
+#if PROFILED = 1
 val match_head : ('a, 'a depth) reduction -> clos_infos -> clos_tab ->
+#else
+val match_head : ('a, 'a depth) reduction -> clos_infos -> Table.t ->
+#endif
   pat_state:'a depth -> resume_state -> fconstr -> stack -> 'a
 
 end =
@@ -1852,7 +2306,11 @@ let rec match_main : type a. (a, a depth) reduction -> _ -> _ -> pat_state:a dep
         let subst, qsubst, usubst = Partial_subst.to_arrays subst in
         let subst = Array.fold_right (fun (n, v) s -> subs_cons (HigherOrder (n, v)) s) subst (subs_id 0) in
         let usubst = UVars.Instance.of_array (qsubst, usubst) in
+#if PROFILED = 1
         let m' = mk_clos None (subst, usubst) rhs in
+#else
+        let m' = mk_clos (subst, usubst) rhs in
+#endif
         begin match pat_state with
         | Nil Yes -> Some (m', stack)
         | _ -> red.red_kni info tab ~pat_state m' stack
@@ -1886,8 +2344,13 @@ and try_unfoldfix red info tab ~pat_state (b, m, stk) =
   match [@ocaml.warning "-4"] stack with
   | Zfix (fx, par) :: s ->
     let stk' = par @ append_stack [|rarg|] s in
+#if PROFILED = 1
     let (fxe,fxbd) = contract_fix_vect fx.ctx fx.term in
     red.red_knit info tab ~pat_state fxe fx.ctx fxbd stk'
+#else
+    let (fxe,fxbd) = contract_fix_vect fx.term in
+    red.red_knit info tab ~pat_state fxe fxbd stk'
+#endif
   | _ -> red.red_ret info tab ~pat_state ~failed:true (m, stk)
 
 and match_elim : 'a. ('a, 'a depth) reduction -> _ -> _ -> pat_state:'a depth -> _ -> _ -> _ -> _ -> _ -> _ -> 'a =
@@ -1913,12 +2376,24 @@ and match_elim : 'a. ('a, 'a depth) reduction -> _ -> _ -> pat_state:'a depth ->
       match_main red info tab ~pat_state states loc
   | Zshift k :: s -> match_elim red info tab ~pat_state next depth states elims (lift_fconstr k head) s
   | Zupdate m :: s ->
+#if PROFILED = 1
       let () = update m head.mark head.ctx head.term in
+#else
+      let () = update m head.mark head.term in
+#endif
       match_elim red info tab ~pat_state next depth states elims head s
+#if PROFILED = 1
   | ZcaseT (ctx, ci, u, pms, ((pctx, p), _ as pred), brs, e) :: s ->
+#else
+  | ZcaseT (ci, u, pms, ((pctx, p), _ as pred), brs, e) :: s ->
+#endif
       let t = FCaseT (ci, u, pms, pred, head, brs, e) in
       let mark = neutr head.mark in
+#if PROFILED = 1
       let head = {ctx; mark; term=t} in
+#else
+      let head = {mark; term=t} in
+#endif
       let prets, pbrss, elims, states = extract_or_kill4 (function [@ocaml.warning "-4"]
       | PECase (pind, pret, pbrs) :: es, subst ->
         if not @@ QInd.equal (info_env info) pind ci.ci_ind then None else
@@ -1928,7 +2403,11 @@ and match_elim : 'a. ('a, 'a depth) reduction -> _ -> _ -> pat_state:'a depth ->
       in
       let mib = Environ.lookup_mind (fst ci.ci_ind) info.i_cache.i_env in
       let mip = mib.mind_packets.(snd ci.ci_ind) in
+#if PROFILED = 1
       let ind_subst = inductive_subst mib u (Array.map (mk_clos ctx e) pms) in
+#else
+      let ind_subst = inductive_subst mib u (Array.map (mk_clos e) pms) in
+#endif
       let loc = LocStart { elims; depth; head; stack=s; next } in
       let loc = Array.fold_right_i (fun i patterns next ->
         let brctx, br = brs.(i) in
@@ -1941,7 +2420,11 @@ and match_elim : 'a. ('a, 'a depth) reduction -> _ -> _ -> pat_state:'a depth ->
             let ctx = List.map Context.Rel.Declaration.get_value ctx in
             esubst_of_context ctx ind_subst e
         in
+#if PROFILED = 1
         LocArg { patterns; depth = brdepth+depth; arg = mk_clos ctx br_e br; next })
+#else
+        LocArg { patterns; depth = brdepth+depth; arg = mk_clos br_e br; next })
+#endif
         (Array.transpose (Array.map (Status.split_array (Array.length brs)) pbrss)) loc in
       let pdepth, pred_e =
         if Int.equal mip.mind_nrealargs mip.mind_nrealdecls then
@@ -1954,11 +2437,23 @@ and match_elim : 'a. ('a, 'a depth) reduction -> _ -> _ -> pat_state:'a depth ->
           let ctx = None :: List.map get_value ctx in
           esubst_of_context ctx ind_subst e
       in
+#if PROFILED = 1
       let loc = LocArg { patterns = prets; depth = pdepth + depth; arg = mk_clos ctx pred_e p; next = loc } in
+#else
+      let loc = LocArg { patterns = prets; depth = pdepth + depth; arg = mk_clos pred_e p; next = loc } in
+#endif
       match_main red info tab ~pat_state states loc
+#if PROFILED = 1
   | Zproj (ctx,proj', r) :: s ->
+#else
+  | Zproj (proj', r) :: s ->
+#endif
       let mark = (neutr head.mark) in
+#if PROFILED = 1
       let head = {ctx;mark; term=FProj(Projection.make proj' true, r, head)} in
+#else
+      let head = {mark; term=FProj(Projection.make proj' true, r, head)} in
+#endif
       let elims, states = extract_or_kill2 (function [@ocaml.warning "-4"]
       | PEProj proj :: es, subst ->
         if not @@ QProjection.Repr.equal (info_env info) proj proj' then None else
@@ -2088,7 +2583,11 @@ and match_head red info tab ~pat_state next depth states patterns t stk =
       ) tysbodyelims states
     in
     let loc = LocStart { elims; depth; head=t; stack=stk; next=Continue next } in
+#if PROFILED = 1
     let loc = LocArg { patterns = pbody; depth = 1 + depth; arg = mk_clos None (usubs_lift e) body; next = loc } in
+#else
+    let loc = LocArg { patterns = pbody; depth = 1 + depth; arg = mk_clos (usubs_lift e) body; next = loc } in
+#endif
     let loc = LocArg { patterns = pty; depth; arg = ty; next = loc } in
     match_main red info tab ~pat_state states loc
   | FLambda (na, ntys, body, e) ->
@@ -2105,9 +2604,17 @@ and match_head red info tab ~pat_state next depth states patterns t stk =
     let ntys, tys' = List.chop na ntys in
     let body = Term.compose_lam (List.rev tys') body in
     let tys = Array.of_list ntys in
+#if PROFILED = 1
     let tys = Array.mapi (fun n (_, t) -> n, mk_clos None (usubs_liftn n e) t) tys in
+#else
+    let tys = Array.mapi (fun n (_, t) -> n, mk_clos (usubs_liftn n e) t) tys in
+#endif
     let loc = LocStart { elims; depth; head=t; stack=stk; next=Continue next } in
+#if PROFILED = 1
     let loc = LocArg { patterns = pbody; depth = Array.length tys + depth; arg = mk_clos None (usubs_liftn na e) body; next = loc } in
+#else
+    let loc = LocArg { patterns = pbody; depth = Array.length tys + depth; arg = mk_clos (usubs_liftn na e) body; next = loc } in
+#endif
     let loc = Array.fold_right2 (fun patterns (ldepth, arg) next -> LocArg { patterns; depth = ldepth + depth; arg; next }) (Array.transpose (Array.map (Status.split_array na) ptys)) tys loc
     in
     match_main red info tab ~pat_state states loc
@@ -2128,7 +2635,11 @@ let match_symbol red info tab ~pat_state fl (u, b, r) stk =
       | None -> Dead, Ignore
     ) (Array.of_list r)
   in
+#if PROFILED = 1
   let m = { ctx=None; mark = Red; term = FFlex fl } in
+#else
+  let m = { mark = Red; term = FFlex fl } in
+#endif
   let loc = LocStart { elims; depth=0; head = m; stack = stk; next = Return (unfold_fix, m, stk) } in
   match_main red info tab ~pat_state states loc
 
@@ -2139,7 +2650,10 @@ end
 
 type 'a depth = 'a RedPattern.depth
 
+#if PROFILED = 1
 let lazy_trace_flag, lazy_trace = CDebug.create_full ~name:"lazy-trace" ()
+
+let is_tracing () = CDebug.get_flag lazy_trace_flag
 
 let pr_step = function
   | Beta  -> "beta "
@@ -2147,12 +2661,14 @@ let pr_step = function
   | Match -> "match"
   | Fix   -> "fix  "
 
-let lazy_trace flag ctx = lazy_trace Pp.(fun () ->
-    hov 2
-      (str (pr_step flag) ++ str " in" ++ spc() ++
-       match ctx with
-       | None | Some [] -> str "top"
-       | Some kns -> prlist_with_sep pr_comma GlobRef.print kns))
+let lazy_trace flag ctx =
+  if CDebug.get_flag lazy_trace_flag then
+    lazy_trace Pp.(fun () ->
+        hov 2
+          (str (pr_step flag) ++ str " in" ++ spc() ++
+           match ctx with
+           | None | Some [] -> str "top"
+           | Some kns -> prlist_with_sep pr_comma GlobRef.print kns))
 
 let record_step_in records flag ctx =
   let record = match RedContextTbl.find_opt records ctx with
@@ -2165,23 +2681,29 @@ let record_step_in records flag ctx =
   add_step record flag
 
 let record_step tab flag ctx =
-  update_time tab ctx;
-  let () = match tab.recorded_steps, !global_steps with
-    | None, None -> ()
-    | Some records, None | None, Some records ->
-      let num,denum = !RecordedSteps.sample_rate in
-      (* sample [num / denum] of the steps *)
-      if num = denum || Random.int denum < num then
-        record_step_in records flag ctx
-    | Some records1, Some records2 ->
-      let num,denum = !RecordedSteps.sample_rate in
-      (* sample [num / denum] of the steps *)
-      if num = denum || Random.int denum < num then begin
-        record_step_in records1 flag ctx;
-        record_step_in records2 flag ctx
-      end
-  in
-  lazy_trace flag ctx
+  if Option.is_empty !global_steps &&
+     Option.is_empty tab.recorded_steps &&
+     not (CDebug.get_flag lazy_trace_flag)
+  then ()
+  else begin
+    update_time tab ctx;
+    let () = match tab.recorded_steps, !global_steps with
+      | None, None -> ()
+      | Some records, None | None, Some records ->
+        let num,denum = !RecordedSteps.sample_rate in
+        (* sample [num / denum] of the steps *)
+        if num = denum || Random.int denum < num then
+          record_step_in records flag ctx
+      | Some records1, Some records2 ->
+        let num,denum = !RecordedSteps.sample_rate in
+        (* sample [num / denum] of the steps *)
+        if num = denum || Random.int denum < num then begin
+          record_step_in records1 flag ctx;
+          record_step_in records2 flag ctx
+        end
+    in
+    lazy_trace flag ctx
+  end
 
 let cons_context fl ctx =
   let kn = let open GlobRef in
@@ -2212,10 +2734,13 @@ let push_context tab fl ctx v =
   then ()
   else push_context fl ctx v
 
+#else
+#endif
 (* Computes a weak head normal form from the result of knh. *)
 let rec knr info tab ~pat_state m stk =
   match m.term with
   | FLambda(n,tys,f,e) when red_set info.i_flags fBETA ->
+#if PROFILED = 1
       (match get_args m.ctx n tys f e stk with
           Inl e', s ->
           (* XXX should we count 1 step or length(args) steps? *)
@@ -2224,20 +2749,37 @@ let rec knr info tab ~pat_state m stk =
         | Inr lam, s ->
           (* XXX if we count length(args) above we should do so here too *)
           knr_ret info tab ~pat_state (lam,s))
+#else
+      (match get_args n tys f e stk with
+          Inl e', s -> knit info tab ~pat_state e' f s
+        | Inr lam, s -> knr_ret info tab ~pat_state (lam,s))
+#endif
   | FFlex fl when red_set info.i_flags fDELTA ->
+#if PROFILED = 1
       (* TODO missing record_step for non-Def definitions *)
       (match Table.lookup info tab.tab fl with
         | Def (v, _) ->
           push_context tab fl m.ctx v;
           record_step tab Delta v.ctx;
           kni info tab ~pat_state v stk
+#else
+      (match Table.lookup info tab fl with
+        | Def (v, _) -> kni info tab ~pat_state v stk
+#endif
         | Primitive op ->
           if check_native_args op stk then
+#if PROFILED = 1
             let ctx = cons_context fl m.ctx in
             let () = record_step tab Delta ctx in
+#else
+#endif
             let c = match fl with ConstKey c -> c | RelKey _ | VarKey _ -> assert false in
             let rargs, a, nargs, stk = get_native_args1 op c stk in
+#if PROFILED = 1
             kni info tab ~pat_state a (Zprimitive(ctx,op,c,rargs,nargs)::stk)
+#else
+            kni info tab ~pat_state a (Zprimitive(op,c,rargs,nargs)::stk)
+#endif
           else
             (* Similarly to fix, partially applied primitives are not Ntrl! *)
             knr_ret info tab ~pat_state (m, stk)
@@ -2249,20 +2791,41 @@ let rec knr info tab ~pat_state m stk =
     let use_fix = red_set info.i_flags fFIX in
     begin match [@ocaml.warning "-4"] stk with
     | Zapp _ :: _ -> assert false (* knh *)
+#if PROFILED = 1
     | ZcaseT(case_ctx, ci,_,pms,_,br,e)::s when use_match ->
+#else
+    | ZcaseT (ci, _, pms, _, br, e) :: s when use_match ->
+#endif
       (* instance on the case and instance on the constructor are compatible by typing *)
+#if PROFILED = 1
       record_step tab Match case_ctx;
+#else
+#endif
       let (br, e) = get_branch info ci pms c args br e in
+#if PROFILED = 1
       knit info tab ~pat_state e case_ctx br s
     | Zfix(fx,par)::s when use_fix ->
+#else
+      knit info tab ~pat_state e br s
+    | Zfix (fx, par) :: s when use_fix ->
+#endif
       let stk' = par @ append_stack [|m|] s in
+#if PROFILED = 1
       record_step tab Fix fx.ctx;
       let (fxe,fxbd) = contract_fix_vect fx.ctx fx.term in
       knit info tab ~pat_state fxe fx.ctx fxbd stk'
     | Zproj (proj_ctx,p,_)::s when use_match ->
+#else
+      let (fxe, fxbd) = contract_fix_vect fx.term in
+      knit info tab ~pat_state fxe fxbd stk'
+    | Zproj (p, _) :: s when use_match ->
+#endif
       let rargs = drop_parameters (Projection.Repr.npars p) args in
       let rarg = rargs.(Projection.Repr.arg p) in
+#if PROFILED = 1
       record_step tab Match proj_ctx;
+#else
+#endif
       kni info tab ~pat_state rarg s
     | _ ->
       if is_irrelevant_constructor info c then
@@ -2276,22 +2839,39 @@ let rec knr info tab ~pat_state m stk =
     else if red_set info.i_flags fCOFIX then
       (match strip_update_shift_app m stk with
         | (_, _, args, (((ZcaseT _|Zproj _)::_) as stk')) ->
+#if PROFILED = 1
             let (fxe,fxbd) = contract_fix_vect m.ctx m.term in
             (* TODO record_step *)
             knit info tab ~pat_state fxe m.ctx fxbd (args@stk')
+#else
+            let (fxe,fxbd) = contract_fix_vect m.term in
+            knit info tab ~pat_state fxe fxbd (args@stk')
+#endif
         | (_, _, args, ((Zapp _ | Zfix _ | Zshift _ | Zupdate _ | Zprimitive _) :: _ | [] as s)) ->
             knr_ret info tab ~pat_state (m,args@s))
     else knr_ret info tab ~pat_state (m, stk)
   | FLetIn (_,v,_,bd,e) when red_set info.i_flags fZETA ->
+#if PROFILED = 1
       (* TODO record_step *)
       knit info tab ~pat_state (usubs_cons v e) m.ctx bd stk
+#else
+      knit info tab ~pat_state (usubs_cons v e) bd stk
+#endif
   | FInt _ | FFloat _ | FString _ | FArray _ ->
     (match [@ocaml.warning "-4"] strip_update_shift_app m stk with
+#if PROFILED = 1
      | (_, _, _, Zprimitive(ctx,op,(_,u as c),rargs,nargs)::s) ->
+#else
+     | (_, _, _, Zprimitive(op,(_,u as c),rargs,nargs)::s) ->
+#endif
        let (rargs, nargs) = skip_native_args (m::rargs) nargs in
        begin match nargs with
+#if PROFILED = 1
        | [] ->
            let () = record_step tab Match ctx in
+#else
+         | [] ->
+#endif
            let args = match rargs with
            | [] -> [||]
            | [a] -> [|a|]
@@ -2306,13 +2886,24 @@ let rec knr info tab ~pat_state m stk =
            end
          | (kd,a)::nargs ->
            assert (kd = CPrimitives.Kwhnf);
+#if PROFILED = 1
            kni info tab ~pat_state a (Zprimitive(ctx,op,c,rargs,nargs)::s)
+#else
+           kni info tab ~pat_state a (Zprimitive(op,c,rargs,nargs)::s)
+#endif
              end
      | (depth, _, _, stk) -> knr_ret info tab ~pat_state (m,zshift depth stk))
   | FCaseInvert (ci, u, pms, ((_pnas, p), _r), iv, _c, v, env) when red_set info.i_flags fMATCH ->
+#if PROFILED = 1
     (* TODO record_step *)
+#else
+#endif
     begin match case_inversion info tab ci u pms p iv v env with
+#if PROFILED = 1
       | Some c -> knit info tab ~pat_state env m.ctx c stk
+#else
+      | Some c -> knit info tab ~pat_state env c stk
+#endif
       | None -> knr_ret info tab ~pat_state (m, stk)
     end
   | FIrrelevant ->
@@ -2334,15 +2925,28 @@ and knr_ret : type a. _ -> _ -> pat_state: a depth -> ?failed: _ -> _ -> a =
       let m, stk = i in
       RedPattern.match_head knred info tab ~pat_state patt m stk
   | RedPattern.Nil b ->
+#if PROFILED = 1
     let () = update_time ~force:true tab (fst i).ctx in
     match b with No -> i | Yes -> if failed then None else Some i
+#else
+      match b with No -> i | Yes -> if failed then None else Some i
+#endif
 
 (* Computes the weak head normal form of a term *)
 and kni info tab ~pat_state m stk =
+#if PROFILED = 1
   let (hm,s) = knh info tab m stk in
+#else
+  let (hm,s) = knh info m stk in
+#endif
   knr info tab ~pat_state hm s
+#if PROFILED = 1
 and knit info tab ~pat_state e ctx t stk =
   let (ht,s) = knht info tab e ctx t stk in
+#else
+and knit info tab ~pat_state e t stk =
+  let (ht,s) = knht info e t stk in
+#endif
   knr info tab ~pat_state ht s
 
 and case_inversion info tab ci u pms p indices brs env = match brs with
@@ -2353,7 +2957,11 @@ and case_inversion info tab ci u pms p indices brs env = match brs with
   if Array.is_empty indices then Some v
   else
     let u = usubst_instance env u in
+#if PROFILED = 1
     let pms = mk_clos_vect None env pms in
+#else
+    let pms = mk_clos_vect env pms in
+#endif
     let psubst = subs_consn pms 0 ci.ci_npar (subs_id 0) in
 
     let mib = Environ.lookup_mind (fst ci.ci_ind) (info_env info) in
@@ -2362,15 +2970,28 @@ and case_inversion info tab ci u pms p indices brs env = match brs with
     let _, indargs = mip.mind_nf_lc.(0) in
     let _, allargs = destApp indargs in
     let _, branch_indices = Array.chop ci.ci_npar allargs in
+#if PROFILED = 1
     let branch_indices = Array.map (fun c -> mk_clos None (psubst, u) c) branch_indices in
+#else
+    let branch_indices = Array.map (fun c -> mk_clos (psubst, u) c) branch_indices in
+#endif
     let branch_subs = usubs_cons mk_irrelevant (usubs_consv branch_indices env) in
     let external_subs = usubs_cons mk_irrelevant (usubs_consv indices env) in
+#if PROFILED = 1
     let branch_type = mk_clos None branch_subs p in
     let external_type = mk_clos None external_subs p in
+#else
+    let branch_type = mk_clos branch_subs p in
+    let external_type = mk_clos external_subs p in
+#endif
 
+#if PROFILED = 1
     let tab = if info.i_cache.i_mode == Conversion then tab
       else { tab = Table.create (); recorded_steps = tab.recorded_steps; last_time = tab.last_time }
     in
+#else
+    let tab = if info.i_cache.i_mode == Conversion then tab else Table.create () in
+#endif
     let info = {info with i_cache = { info.i_cache with i_mode = Conversion}; i_flags=all} in
     if !conv info tab branch_type external_type
     then Some v else None
@@ -2408,13 +3029,21 @@ let rec kl info tab m =
     let () = if share then ignore (fapp_stack (nm, s)) in (* to unlock Zupdates! *)
     zip_term info tab (norm_head info tab nm) s
 
+#if PROFILED = 1
 and klt info tab e ctx t = match kind t with
+#else
+and klt info tab e t = match kind t with
+#endif
 | Rel i ->
   begin match expand_rel i (fst e) with
   | Inl (n, Regular mt) -> kl info tab @@ lift_fconstr n mt
   | Inl (_, HigherOrder (nargs, term)) -> assert (Int.equal nargs 0); kl info tab term
   | Inr (k, None) -> if Int.equal k i then t else mkRel k
+#if PROFILED = 1
   | Inr (k, Some p) -> kl info tab @@ lift_fconstr (k-p) {ctx=None;mark=Red;term=FFlex(RelKey p)}
+#else
+  | Inr (k, Some p) -> kl info tab @@ lift_fconstr (k-p) {mark=Red;term=FFlex(RelKey p)}
+#endif
   end
 | App (hd, args) ->
   let is_stuck = match kind hd with
@@ -2432,31 +3061,57 @@ and klt info tab e ctx t = match kind t with
   | App _ -> assert false
   in
   if is_stuck then
+#if PROFILED = 1
     let args' = Array.Smart.map (fun c -> klt info tab e ctx c) args in
+#else
+    let args' = Array.Smart.map (fun c -> klt info tab e c) args in
+#endif
     let hd' = subst_instance_constr (snd e) hd in
     if hd' == hd && args' == args then t
     else mkApp (hd', args')
   else
     let share = info.i_cache.i_share in
+#if PROFILED = 1
     let (nm,s) = knit info tab e ctx t [] in
+#else
+    let (nm,s) = knit info tab e t [] in
+#endif
     let () = if share then ignore (fapp_stack (nm, s)) in (* to unlock Zupdates! *)
     zip_term info tab (norm_head info tab nm) s
 | Lambda (na, u, c) ->
   let na' = usubst_binder e na in
+#if PROFILED = 1
   let u' = klt info tab e ctx u in
   let c' = klt (push_relevance info na') tab (usubs_lift e) ctx c in
+#else
+  let u' = klt info tab e u in
+  let c' = klt (push_relevance info na') tab (usubs_lift e) c in
+#endif
   if na' == na && u' == u && c' == c then t
   else mkLambda (na', u', c')
 | Prod (na, u, v) ->
   let na' = usubst_binder e na in
+#if PROFILED = 1
   let u' = klt info tab e ctx u in
   let v' = klt (push_relevance info na') tab (usubs_lift e) ctx v in
+#else
+  let u' = klt info tab e u in
+  let v' = klt (push_relevance info na') tab (usubs_lift e) v in
+#endif
   if na' == na && u' == u && v' == v then t
   else mkProd (na', u', v')
+#if PROFILED = 1
 | Cast (t, _, _) -> klt info tab e ctx t
+#else
+| Cast (t, _, _) -> klt info tab e t
+#endif
 | Var _ | Const _ | CoFix _ | Fix _ | Evar _ | Case _ | LetIn _ | Proj _ | Array _ ->
   let share = info.i_cache.i_share in
+#if PROFILED = 1
   let (nm,s) = knit info tab e ctx t [] in
+#else
+  let (nm,s) = knit info tab e t [] in
+#endif
   let () = if share then ignore (fapp_stack (nm, s)) in (* to unlock Zupdates! *)
   zip_term info tab (norm_head info tab nm) s
 | Meta _ | Sort _ | Ind _ | Construct _ | Int _ | Float _ | String _ ->
@@ -2470,35 +3125,65 @@ and norm_head info tab m =
       | FLambda(_n,tys,f,e) ->
         let fold (e, info, ctxt) (na, ty) =
           let na = usubst_binder e na in
+#if PROFILED = 1
           let ty = klt info tab e m.ctx ty in
+#else
+          let ty = klt info tab e ty in
+#endif
           let info = push_relevance info na in
           (usubs_lift e, info, (na, ty) :: ctxt)
         in
         let (e', info, rvtys) = List.fold_left fold (e,info,[]) tys in
+#if PROFILED = 1
         let bd = klt info tab e' m.ctx f in
+#else
+        let bd = klt info tab e' f in
+#endif
         List.fold_left (fun b (na,ty) -> mkLambda(na,ty,b)) bd rvtys
       | FLetIn(na,a,b,f,e) ->
           let na = usubst_binder e na in
+#if PROFILED = 1
           let c = klt (push_relevance info na) tab (usubs_lift e) m.ctx f in
+#else
+          let c = klt (push_relevance info na) tab (usubs_lift e) f in
+#endif
           mkLetIn(na, kl info tab a, kl info tab b, c)
       | FProd(na,dom,rng,e) ->
         let na = usubst_binder e na in
+#if PROFILED = 1
         let rng = klt (push_relevance info na) tab (usubs_lift e) m.ctx rng in
+#else
+        let rng = klt (push_relevance info na) tab (usubs_lift e) rng in
+#endif
           mkProd(na, kl info tab dom, rng)
       | FCoFix((n,(na,tys,bds)),e) ->
           let na = Array.Smart.map (usubst_binder e) na in
           let infobd = push_relevances info na in
+#if PROFILED = 1
           let ftys = Array.map (fun ty -> klt info tab e m.ctx ty) tys in
           let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) m.ctx bd) bds in
+#else
+          let ftys = Array.map (fun ty -> klt info tab e ty) tys in
+          let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) bd) bds in
+#endif
           mkCoFix (n, (na, ftys, fbds))
       | FFix((n,(na,tys,bds)),e) ->
           let na = Array.Smart.map (usubst_binder e) na in
           let infobd = push_relevances info na in
+#if PROFILED = 1
           let ftys = Array.map (fun ty -> klt info tab e m.ctx ty) tys in
           let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) m.ctx bd) bds in
+#else
+          let ftys = Array.map (fun ty -> klt info tab e ty) tys in
+          let fbds = Array.map (fun bd -> klt infobd tab (usubs_liftn (Array.length na) e) bd) bds in
+#endif
           mkFix (n, (na, ftys, fbds))
       | FEvar(ev, args, env, repack) ->
+#if PROFILED = 1
           repack (ev, List.map (fun a -> klt info tab env m.ctx a) args)
+#else
+          repack (ev, List.map (fun a -> klt info tab env a) args)
+#endif
       | FProj (p,r,c) ->
         mkProj (p, r, kl info tab c)
       | FArray (u, a, ty) ->
@@ -2517,18 +3202,35 @@ and zip_term info tab m stk = match stk with
 | [] -> m
 | Zapp args :: s ->
     zip_term info tab (mkApp(m, Array.map (kl info tab) args)) s
+#if PROFILED = 1
 | ZcaseT(ctx, ci, u, pms, (p,r), br, e) :: s ->
+#else
+| ZcaseT(ci, u, pms, (p,r), br, e) :: s ->
+#endif
   let zip_ctx (nas, c) =
       let nas = Array.map (usubst_binder e) nas in
       let e = usubs_liftn (Array.length nas) e in
+#if PROFILED = 1
       (nas, klt info tab e ctx c)
+#else
+      (nas, klt info tab e c)
+#endif
     in
     let r = usubst_relevance e r in
     let u = usubst_instance e u in
+#if PROFILED = 1
     let t = mkCase(ci, u, Array.map (fun c -> klt info tab e ctx c) pms, (zip_ctx p, r),
       NoInvert, m, Array.map zip_ctx br) in
+#else
+    let t = mkCase(ci, u, Array.map (fun c -> klt info tab e c) pms, (zip_ctx p, r),
+      NoInvert, m, Array.map zip_ctx br) in
+#endif
     zip_term info tab t s
+#if PROFILED = 1
 | Zproj (_ctx,p,r)::s ->
+#else
+| Zproj (p,r)::s ->
+#endif
     let t = mkProj (Projection.make p true, r, m) in
     zip_term info tab t s
 | Zfix(fx,par)::s ->
@@ -2538,7 +3240,11 @@ and zip_term info tab m stk = match stk with
     zip_term info tab (lift n m) s
 | Zupdate(_rf)::s ->
     zip_term info tab m s
+#if PROFILED = 1
 | Zprimitive(_,_,c,rargs, kargs)::s ->
+#else
+| Zprimitive(_,c,rargs, kargs)::s ->
+#endif
     let kargs = List.map (fun (_,a) -> kl info tab a) kargs in
     let args =
       List.fold_left (fun args a -> kl info tab a ::args) (m::kargs) rargs in
@@ -2552,13 +3258,21 @@ let whd_val info tab v = term_of_fconstr (kh info tab v [])
 
 (* strong reduction *)
 let norm_val info tab v = kl info tab v
+#if PROFILED = 1
 let norm_term info tab e t = klt info tab e None t
+#else
+let norm_term info tab e t = klt info tab e t
+#endif
 
 let whd_stack infos tab m stk = match m.mark with
 | Ntrl ->
   (** No need to perform [kni] nor to unlock updates because
       every head subterm of [m] is [Ntrl] *)
+#if PROFILED = 1
   knh infos tab m stk
+#else
+  knh infos m stk
+#endif
 | Red | Cstr ->
   let k = kni infos tab m stk in
   let () =
@@ -2584,6 +3298,7 @@ let oracle_of_infos infos = Environ.oracle infos.i_cache.i_env
 let infos_with_reds infos reds =
   { infos with i_flags = reds }
 
+#if PROFILED = 1
 let unfold_ref_with_args infos tab m v =
   let fl = match[@warning "-4"] m.term with
     | FFlex fl -> fl
@@ -2593,20 +3308,36 @@ let unfold_ref_with_args infos tab m v =
   | Def (def, _) ->
     push_context tab fl m.ctx def;
     Some (def, v)
+#else
+let unfold_ref_with_args infos tab fl v =
+  match Table.lookup infos tab fl with
+  | Def (def, _) -> Some (def, v)
+#endif
   | Primitive op when check_native_args op v ->
     let c = match [@ocaml.warning "-4"] fl with ConstKey c -> c | _ -> assert false in
     let rargs, a, nargs, v = get_native_args1 op c v in
+#if PROFILED = 1
     Some (a, (Zupdate a::(Zprimitive(cons_context fl m.ctx,op,c,rargs,nargs)::v)))
+#else
+    Some (a, (Zupdate a::(Zprimitive(op,c,rargs,nargs)::v)))
+#endif
   | Symbol (u, b, r) ->
     RedPattern.match_symbol knred (infos_with_reds infos all) tab ~pat_state:(RedPattern.Nil Yes) fl (u, b, r) v
   | Undef _ | OpaqueDef _ | Primitive _ -> None
 
+#if PROFILED = 1
 let get_ref_mask info tab fl = match Table.lookup info tab.tab fl with
+#else
+let get_ref_mask info tab fl = match Table.lookup info tab fl with
+#endif
 | Def (_, mask) -> mask
 | Primitive _ | Symbol _ | Undef _ | OpaqueDef _ -> [||]
+#if PROFILED = 1
 
 let inject c = inject None c
 
 let unfold_projection info p r = unfold_projection info None p r
 
 let record_delta tab m = record_step tab Delta m.ctx
+#else
+#endif
