@@ -79,9 +79,29 @@ let find_rectype_a env sigma c =
   | Ind ind -> (ind, l)
   | _ -> raise Not_found
 
+type prepared_context = {
+  telescope : Constr.rel_context * Constr.types;
+  dependencies : int list option;
+  all_static : bool;
+}
+
+type ctor_instance = {
+  instance_u : UVars.Instance.t;
+  instance_params : Constr.constr array;
+  prepared : prepared_context;
+}
+
+type ctor_template = {
+  packet : Declarations.one_inductive_body;
+  index : int;
+  classes : int list;
+  instances : ctor_instance list ref;
+}
+
 type env = {
   env : Environ.env;
   norm_params : bool;
+  ctor_cache : ctor_template list ref;
 }
 
 let push_rel decl env =
@@ -113,6 +133,62 @@ let type_constructor mind mib mip i u params =
     let ctyp = substl (subst_of_rel_context_instance mib.mind_params_ctxt params) ctyp in
     Term.decompose_prod_decls ctyp
 
+(* Bits: 1 = parameters; 2 = earlier constructor declarations. *)
+let classify_constructor_entry earlier nparams c =
+  let mask = ref 0 in
+  let rec walk depth c = match Constr.kind c with
+  | Rel i ->
+    let i = i - depth in
+    if i > 0 && i <= earlier then mask := !mask lor 2
+    else if i > earlier && i <= earlier + nparams then mask := !mask lor 1
+    else if i > earlier + nparams then failwith "unexpected free constructor Rel"
+  | _ -> Constr.iter_with_binders succ walk depth c
+  in
+  walk 0 c; !mask
+
+let prepare_constructor env mind mib mip i u params =
+  let rec find_template = function
+  | [] ->
+    let ctx, _ = mip.mind_nf_lc.(i) in
+    let ctx = List.rev (List.firstn mip.mind_consnrealdecls.(i) ctx) in
+    let nparams = Context.Rel.length mib.mind_params_ctxt in
+    let earlier = ref 0 in
+    let classes = List.map (fun decl ->
+        let c = match decl with
+        | LocalAssum (_, dom) -> dom
+        | LocalDef (_, def, _) -> def
+        in
+        let dep = classify_constructor_entry !earlier nparams c in
+        incr earlier; dep) ctx
+    in
+    let template = { packet = mip; index = i; classes; instances = ref [] } in
+    env.ctor_cache := template :: !(env.ctor_cache);
+    template
+  | template :: rest ->
+    if template.packet == mip && Int.equal template.index i then template
+    else find_template rest
+  in
+  let template = find_template !(env.ctor_cache) in
+  let rec find_instance = function
+  | [] ->
+    (* Open parameters retain the original argument substitution so that
+       parameters lifted under preceding constructor binders are relocated. *)
+    let closed = Array.for_all Vars.closed0 params in
+    let prepared = {
+      telescope = type_constructor mind mib mip i u params;
+      dependencies = if closed then Some template.classes else None;
+      all_static = closed && List.for_all (fun d -> d land 2 = 0) template.classes;
+    } in
+    let instance = { instance_u = u; instance_params = params; prepared } in
+    template.instances := instance :: !(template.instances);
+    instance
+  | instance :: rest ->
+    if UVars.Instance.equal instance.instance_u u &&
+       Array.equal (==) instance.instance_params params then instance
+    else find_instance rest
+  in
+  (find_instance !(template.instances)).prepared
+
 let construct_of_constr_block env sigma tag typ =
   let t, allargs = app_type !!env sigma (EConstr.of_constr typ) in
   match Constr.kind t with
@@ -121,7 +197,7 @@ let construct_of_constr_block env sigma tag typ =
     let nparams = mib.mind_nparams in
     let i = invert_tag false tag mip.mind_reloc_tbl in
     let params = if Int.equal mip.mind_nrealargs 0 then allargs else Array.sub allargs 0 nparams in
-    let ctyp = type_constructor mind mib mip (i - 1) u params in
+    let ctyp = prepare_constructor env mind mib mip (i - 1) u params in
     let params =
       if env.norm_params then
         Array.map (fun c -> EConstr.Unsafe.to_constr (Reductionops.nf_all !!env sigma (EConstr.of_constr c))) params
@@ -130,7 +206,8 @@ let construct_of_constr_block env sigma tag typ =
     (mkApp(mkConstructUi(indu,i), params), ctyp)
   | _ ->
     let () = assert (Constr.equal t (Typeops.type_of_int !!env)) in
-    (mkInt (Uint63.of_int tag), ([], t))
+    (mkInt (Uint63.of_int tag),
+     { telescope = ([], t); dependencies = None; all_static = false })
 
 let construct_of_constr_const env sigma tag typ =
   let t, allargs = app_type !!env sigma (EConstr.of_constr typ) in
@@ -421,20 +498,50 @@ and nf_args env sigma vargs ?from:(f=0) t =
   let typ, args = nf_telescope env sigma len fargs t in
   CClosure.term_of_fconstr typ, args
 
-and nf_bargs env sigma b ofs (ctx, typ) =
-  let rec norm i accu subst = function
-  | [] -> accu
-  | LocalAssum (na, dom) :: ctx ->
-    let dom = Vars.esubst Vars.lift_substituend subst dom in
-    let arg = nf_val env sigma (bfield b (i + ofs)) dom in
-    let subst = Esubst.subs_cons (Vars.make_substituend arg) subst in
-    norm (i + 1) (arg :: accu) subst ctx
-  | LocalDef (na, def, _) :: ctx ->
-    let def = Vars.esubst Vars.lift_substituend subst def in
-    let subst = Esubst.subs_cons (Vars.make_substituend def) subst in
-    norm i accu subst ctx
+and nf_bargs env sigma b ofs prepared =
+  let ctx, _typ = prepared.telescope in
+  let ans = match prepared.dependencies with
+  | None ->
+    let rec norm i accu subst = function
+    | [] -> accu
+    | LocalAssum (na, dom) :: ctx ->
+      let dom = Vars.esubst Vars.lift_substituend subst dom in
+      let arg = nf_val env sigma (bfield b (i + ofs)) dom in
+      let subst = Esubst.subs_cons (Vars.make_substituend arg) subst in
+      norm (i + 1) (arg :: accu) subst ctx
+    | LocalDef (na, def, _) :: ctx ->
+      let def = Vars.esubst Vars.lift_substituend subst def in
+      let subst = Esubst.subs_cons (Vars.make_substituend def) subst in
+      norm i accu subst ctx
+    in
+    norm 0 [] (Esubst.subs_id 0) (List.rev ctx)
+  | Some _ when prepared.all_static ->
+    let rec norm i accu = function
+    | [] -> accu
+    | LocalAssum (_, dom) :: ctx ->
+      let arg = nf_val env sigma (bfield b (i + ofs)) dom in
+      norm (i + 1) (arg :: accu) ctx
+    | LocalDef _ :: ctx -> norm i accu ctx
+    in
+    norm 0 [] (List.rev ctx)
+  | Some classes ->
+    let rec norm i accu subst ctx classes = match ctx, classes with
+    | [], [] -> accu
+    | LocalAssum (_, dom) :: ctx, dep :: classes ->
+      let dom = if dep land 2 = 0 then dom
+        else Vars.esubst Vars.lift_substituend subst dom in
+      let arg = nf_val env sigma (bfield b (i + ofs)) dom in
+      let subst = Esubst.subs_cons (Vars.make_substituend arg) subst in
+      norm (i + 1) (arg :: accu) subst ctx classes
+    | LocalDef (_, def, _) :: ctx, dep :: classes ->
+      let def = if dep land 2 = 0 then def
+        else Vars.esubst Vars.lift_substituend subst def in
+      let subst = Esubst.subs_cons (Vars.make_substituend def) subst in
+      norm i accu subst ctx classes
+    | _ -> assert false
+    in
+    norm 0 [] (Esubst.subs_id 0) (List.rev ctx) classes
   in
-  let ans = norm 0 [] (Esubst.subs_id 0) (List.rev ctx) in
   Array.rev_of_list ans
 
 and nf_fun env sigma f typ =
@@ -521,5 +628,5 @@ let cbv_vm ?(flags = default_vm_flags) env sigma c t  =
   let c = EConstr.Unsafe.to_constr c in
   let t = EConstr.Unsafe.to_constr t in
   let v = Vmsymtable.val_of_constr env (evars_of_evar_map sigma) c in
-  let env = { env; norm_params = flags.vm_normalize_params } in
+  let env = { env; norm_params = flags.vm_normalize_params; ctor_cache = ref [] } in
   EConstr.of_constr (nf_val env sigma v t)
