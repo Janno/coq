@@ -620,6 +620,19 @@ let check_case_info env (indsp,u) ci =
     is_primitive_record spec
   then raise (TypeError(env,WrongCaseInfo((indsp,u),ci)))
 
+let should_invert_case env ~return_is_relevant ind =
+  return_is_relevant &&
+  let mib, mip = lookup_mind_specif env ind in
+  (* The inductive's declared relevance does not need normalization. *)
+  Sorts.relevance_equal mip.mind_relevance Sorts.Irrelevant &&
+  (* With universe checks disabled, even an irrelevant inductive can have
+     multiple constructors or a constructor with arguments. Do not invert
+     those cases. *)
+  match Array.length mip.mind_nf_lc with
+  | 0 -> true
+  | 1 -> List.length (fst mip.mind_nf_lc.(0)) = List.length mib.mind_params_ctxt
+  | _ -> false
+
 
 (************************************************************************)
 (************************************************************************)
