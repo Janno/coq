@@ -331,10 +331,33 @@ let type_of_product env _name s1 s2 =
          env |- c:typ2
 *)
 
-let check_cast env c ct k expected_type =
+let vm_conv_readback env ~validate t1 t2 =
+  let fallback () = default_conv CUMUL env t1 t2 in
+  if not (typing_flags env).Declarations.enable_VM then fallback ()
+  else
+    let ctx = {
+      Vreadback.evars = CClosure.default_evar_handler env;
+      evar_type = (fun _ -> raise Not_found);
+      return_is_relevant = (fun env r -> check_relevance env r Sorts.Relevant);
+    } in
+    let residuals = NewProfile.profile "vm_conv_readback" (fun () ->
+      match Vreadback.try_vm_type env ctx t1, Vreadback.try_vm_type env ctx t2 with
+      | Some lhs, Some rhs when validate t1 lhs && validate t2 rhs ->
+        Some (NewProfile.profile "vm_conv_readback_residuals"
+          (fun () -> default_conv CUMUL env lhs rhs) ())
+      | _ -> None) () in
+    match residuals with
+    | Some (Result.Ok ()) -> Result.Ok ()
+    | _ -> fallback ()
+
+let check_cast ?validate_readback env c ct k expected_type =
   let ans = match k with
     | VMcast ->
-      Vconv.vm_conv CUMUL env ct expected_type
+      begin match validate_readback with
+      | Some validate when Environ.vm_conversion_readback env ->
+        vm_conv_readback env ~validate ct expected_type
+      | _ -> Vconv.vm_conv CUMUL env ct expected_type
+      end
     | DEFAULTcast ->
       default_conv CUMUL env ct expected_type
     | NATIVEcast ->
@@ -585,6 +608,34 @@ let push_rec_types (lna,typarray,_) env =
   let ctxt = Array.map2_i (fun i na t -> RelDecl.LocalAssum (na, lift i t)) lna typarray in
   Array.fold_left (fun e assum -> push_rel assum e) env ctxt
 
+let check_declared_qualities env qualities =
+  let module S = Sorts.Quality.Set in
+  let unknown = S.diff qualities (QGraph.domain @@ Environ.qualities env) in
+  if S.is_empty unknown then ()
+  else error_undeclared_qualities env unknown
+
+let check_wellformed_universes env c =
+  let qualities, univs = sort_and_universes_of_constr c in
+  check_declared_qualities env qualities;
+  match UGraph.check_declared_universes (universes env) univs
+  with
+  | Ok () -> ()
+  | Error u -> error_undeclared_universes env u
+
+let check_wellformed_universes env c =
+  NewProfile.profile "check-wf-univs" (fun () -> check_wellformed_universes env c) ()
+
+let validate_readback env check_type original residual =
+  (* Conversion expects well-typed inputs. Typing alone would not establish
+     that readback preserved the original type. Check both before trusting
+     conversion on the residuals. *)
+  let env = Environ.set_vm_conversion_readback false env in
+  try
+    check_wellformed_universes env residual;
+    check_type env residual;
+    Result.is_ok (default_conv CONV env original residual)
+  with TypeError _ -> false
+
 (* The typing machine. *)
 let rec execute tbl env cstr =
   if Int.equal (HConstr.refcount cstr) 1 then execute_aux tbl env cstr
@@ -667,7 +718,10 @@ and execute_aux tbl env cstr =
     | Cast (c,k,t) ->
       let ct = execute tbl env c in
       let _ts : Sorts.t = execute_is_type tbl env t in
-      let () = check_cast env (self c) ct k (self t) in
+      let validate_readback = validate_readback env (fun env residual ->
+        let residual = HConstr.of_constr env residual in
+        ignore (execute_is_type (HConstr.Tbl.create ()) env residual)) in
+      let () = check_cast ~validate_readback env (self c) ct k (self t) in
       self t
 
     (* Inductive types *)
@@ -817,23 +871,6 @@ let execute env c =
 
 (* Derived functions *)
 
-let check_declared_qualities env qualities =
-  let module S = Sorts.Quality.Set in
-  let unknown = S.diff qualities (QGraph.domain @@ Environ.qualities env) in
-  if S.is_empty unknown then ()
-  else error_undeclared_qualities env unknown
-
-let check_wellformed_universes env c =
-  let qualities, univs = sort_and_universes_of_constr c in
-  check_declared_qualities env qualities;
-  match UGraph.check_declared_universes (universes env) univs
-  with
-  | Ok () -> ()
-  | Error u -> error_undeclared_universes env u
-
-let check_wellformed_universes env c =
-  NewProfile.profile "check-wf-univs" (fun () -> check_wellformed_universes env c) ()
-
 let infer_hconstr env hconstr =
   let constr = HConstr.self hconstr in
   let () = check_wellformed_universes env constr in
@@ -877,7 +914,8 @@ let check_context env rels =
     rels ~init:(env,[])
 
 let check_cast env cj k tj =
-  check_cast env cj.uj_val cj.uj_type k tj.utj_val
+  let validate_readback = validate_readback env (fun env t -> ignore (infer_type env t)) in
+  check_cast ~validate_readback env cj.uj_val cj.uj_type k tj.utj_val
 
 (* Building type of primitive operators and type *)
 

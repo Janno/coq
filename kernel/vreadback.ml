@@ -488,3 +488,11 @@ let readback ~normalize_params env ctx v typ =
 
 let readback_type env ctx v =
   nf_vtype { env; norm_params = false } ctx v
+
+let try_vm_type env ctx t =
+  try
+    let v = Vmsymtable.val_of_constr ~share:true env { Genlambda.evars_val = ctx.evars } t in
+    Some (readback_type env ctx v)
+  with
+  | Vmerrors.CompileError _ | Not_found | Invalid_argument _ | DestKO -> None
+  | exn when CErrors.is_sync_anomaly exn -> None

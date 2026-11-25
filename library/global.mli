@@ -206,6 +206,7 @@ val set_unfold_dep_heuristic : bool -> unit
 val set_unfold_height_heuristic : bool -> unit
 
 val set_VM : bool -> unit
+val set_vm_conversion_readback : bool -> unit
 val set_native_compiler : bool -> unit
 
 (* Modifies the global state, registering new universes *)

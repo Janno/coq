@@ -269,6 +269,9 @@ val infer_conv : ?catch_incon:bool -> ?pb:conv_pb -> ?ts:TransparentState.t ->
 val vm_infer_conv : ?pb:conv_pb -> env -> evar_map -> constr -> constr ->
   evar_map option
 
+(** Cumulativity between the types of a VM cast. Honors VM Conversion Readback. *)
+val vm_cast_infer_conv : env -> evar_map -> types -> types -> evar_map option
+
 val native_infer_conv : ?pb:conv_pb -> env -> evar_map -> constr -> constr ->
   evar_map option
 

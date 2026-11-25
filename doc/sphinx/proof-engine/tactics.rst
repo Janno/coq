@@ -1907,6 +1907,19 @@ Performance-oriented tactic variants
       instructs the kernel to use :tacn:`vm_compute` to compare the
       goal's type with the :n:`@term`'s type.
 
+      .. opt:: VM Conversion Readback
+
+         When enabled, checking a VM cast (including :g:`@term <: @type`)
+         evaluates both types with the VM, reconstructs Rocq terms from the
+         resulting values, and compares those terms with ordinary conversion.
+         The kernel verifies that each reconstructed type is well typed and
+         convertible to its original before using it. If the VM is disabled or
+         this strategy does not succeed, checking falls back to ordinary
+         conversion on the original types.
+
+         This experimental option is off by default. It does not change
+         :tacn:`vm_compute` or add a new kind of cast.
+
       .. example::
 
         .. rocqtop:: all abort

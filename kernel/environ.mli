@@ -66,6 +66,10 @@ val set_qualities : QGraph.t -> env -> env
 val qualities : env -> QGraph.t
 
 val typing_flags    : env -> typing_flags
+
+(** Session-local strategy for checking VM casts, not stored in libraries. *)
+val vm_conversion_readback : env -> bool
+val set_vm_conversion_readback : bool -> env -> env
 val is_impredicative_set : env -> bool
 val type_in_type : env -> bool
 val ignore_elim_constraints : env -> bool

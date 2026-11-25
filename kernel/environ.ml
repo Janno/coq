@@ -99,6 +99,7 @@ type env = {
   env_qualities : QGraph.t;
   symb_pats : machine_rewrite_rule list Cmap.t;
   env_typing_flags  : typing_flags;
+  vm_conversion_readback : bool;
   vm_library : Vmlibrary.t;
   retroknowledge : Retroknowledge.retroknowledge;
   rewrite_rules_allowed : bool;
@@ -143,6 +144,7 @@ let empty_env = {
   irr_inds = Indmap.empty;
   symb_pats = Cmap.empty;
   env_typing_flags = Declareops.safe_flags Conv_oracle.empty;
+  vm_conversion_readback = false;
   vm_library = Vmlibrary.empty;
   retroknowledge = Retroknowledge.empty;
   rewrite_rules_allowed = false;
@@ -449,6 +451,9 @@ let set_oracle env o =
   { env with env_typing_flags }
 
 let typing_flags env = env.env_typing_flags
+
+let vm_conversion_readback env = env.vm_conversion_readback
+let set_vm_conversion_readback b env = { env with vm_conversion_readback = b }
 
 let is_impredicative_set env = env.env_typing_flags.impredicative_set
 

@@ -25,6 +25,11 @@ let context sigma =
   in
   { Vreadback.evars = Evd.evar_handler sigma; evar_type; return_is_relevant }
 
+let try_vm_type env sigma t =
+  let env = Environ.set_universes (Evd.universes sigma) env in
+  Option.map EConstr.of_constr
+    (Vreadback.try_vm_type env (context sigma) (EConstr.Unsafe.to_constr t))
+
 type vm_flags = {
   vm_normalize_params : bool;
   vm_share_values : bool;

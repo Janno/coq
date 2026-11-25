@@ -1415,6 +1415,22 @@ let vm_infer_conv ?(pb=Conversion.CUMUL) env sigma t1 t2 =
       Vconv.vm_conv_gen pb (evars_of_evar_map sigma) }
     ~catch_incon:true ~pb env sigma t1 t2
 
+let vm_cast_infer_conv env sigma t1 t2 =
+  if not (Environ.vm_conversion_readback env) then vm_infer_conv env sigma t1 t2
+  else
+    let residual_conv () =
+      let ( let* ) = Option.bind in
+      let* lhs = Vnorm.try_vm_type env sigma t1 in
+      let* rhs = Vnorm.try_vm_type env sigma t2 in
+      let* sigma = infer_conv ~pb:Conversion.CONV env sigma t1 lhs in
+      let* sigma = infer_conv ~pb:Conversion.CONV env sigma t2 rhs in
+      infer_conv env sigma lhs rhs
+    in
+    let ans = if (Environ.typing_flags env).Declarations.enable_VM then residual_conv () else None in
+    match ans with
+    | Some _ -> ans
+    | None -> infer_conv env sigma t1 t2
+
 let native_conv_generic pb sigma t =
   Nativeconv.native_conv_gen pb (evars_of_evar_map sigma) t
 

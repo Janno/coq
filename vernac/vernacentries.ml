@@ -2004,6 +2004,14 @@ let () =
       optwrite = Global.set_unfold_height_heuristic }
 
 let () =
+  declare_bool_option
+    { optstage = Summary.Stage.Interp;
+      optdepr  = None;
+      optkey   = ["VM"; "Conversion"; "Readback"];
+      optread  = (fun () -> Environ.vm_conversion_readback (Global.env ()));
+      optwrite = Global.set_vm_conversion_readback }
+
+let () =
   declare_int_option
     { optstage = Summary.Stage.Interp;
       optdepr  = None;

@@ -178,6 +178,7 @@ val set_check_guarded : bool -> safe_transformer0
 val set_check_positive : bool -> safe_transformer0
 val set_check_universes : bool -> safe_transformer0
 val set_VM : bool -> safe_transformer0
+val set_vm_conversion_readback : bool -> safe_transformer0
 val set_native_compiler : bool -> safe_transformer0
 val set_allow_sprop : bool -> safe_transformer0
 

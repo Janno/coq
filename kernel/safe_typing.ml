@@ -356,6 +356,9 @@ let set_VM b senv =
   let flags = Environ.typing_flags senv.env in
   set_typing_flags { flags with enable_VM = b } senv
 
+let set_vm_conversion_readback b senv =
+  { senv with env = Environ.set_vm_conversion_readback b senv.env }
+
 let set_native_compiler b senv =
   let flags = Environ.typing_flags senv.env in
   set_typing_flags { flags with enable_native_compiler = b } senv

@@ -20,3 +20,5 @@ type vm_flags = {
 
 (** {6 Reduction functions } *)
 val cbv_vm : ?flags:vm_flags -> env -> Evd.evar_map -> constr -> types -> constr
+
+val try_vm_type : env -> Evd.evar_map -> types -> types option

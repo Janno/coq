@@ -261,6 +261,7 @@ let set_unfold_height_heuristic b =
   globalize0 (Safe_typing.set_unfold_height_heuristic b)
 
 let set_VM b = globalize0 (Safe_typing.set_VM b)
+let set_vm_conversion_readback b = globalize0 (Safe_typing.set_vm_conversion_readback b)
 let set_native_compiler b = globalize0 (Safe_typing.set_native_compiler b)
 
 module Internal =
